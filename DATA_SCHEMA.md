@@ -4,6 +4,13 @@
 
 The output schema must support different product types without forcing every product into the same fixed set of fields.
 
+The schema must also clearly distinguish between:
+
+- extracted or source-confirmed information
+- inferred information
+- suggested or enriched information
+- information that requires review
+
 ## Core Idea
 
 Each product should have:
@@ -24,10 +31,11 @@ Each product should have:
   "product_id": "string",
   "product_name": "string",
   "product_category": "string",
+  "product_type_status": "identified|uncertain",
   "source_summary": [
     {
       "source_id": "string",
-      "source_type": "pdf|txt|json|csv|url",
+      "source_type": "pdf|txt|json",
       "source_name": "string"
     }
   ],
@@ -47,13 +55,15 @@ Each product should have:
     "pressure_rating": {
       "value": 150,
       "unit": "psi",
+      "value_status": "source_confirmed|inferred|suggested|needs_review",
       "confidence": 0.94,
-      "status": "confirmed|inferred|needs_review",
+      "confidence_basis": "evidence_and_validation_summary",
       "evidence": [
         {
           "source_id": "source_1",
           "location": "page 3",
-          "quote": "150 PSI"
+          "quote": "150 PSI",
+          "evidence_type": "direct|indirect"
         }
       ]
     }
@@ -108,15 +118,32 @@ For the MVP, evidence may include:
 - page number if available
 - short supporting quote
 
+The MVP should prefer direct source-confirmed evidence whenever possible.
+
 ## Confidence Representation
 
-Confidence should be a number between 0 and 1.
+Confidence should be a number between 0 and 1, but it should not be treated as a random LLM-generated score.
+
+For the MVP, confidence should be simple and explainable. It can be based on a small set of signals such as:
+
+- evidence availability
+- source agreement
+- validation results
+- direct versus indirect evidence
+- uncertainty or missing data
 
 Suggested meaning:
 
 - 0.90 to 1.00: very strong evidence and agreement
 - 0.70 to 0.89: likely correct but should be reviewed
 - below 0.70: weak or uncertain
+
+Suggested MVP approach:
+
+- start from a base score
+- increase the score when multiple sources agree
+- decrease the score when validation fails or evidence is weak
+- lower the score when the value is inferred instead of source-confirmed
 
 ## Conflict Representation
 
@@ -143,6 +170,12 @@ Each missing attribute should include:
 
 If the system suggests a likely value, it should be marked as inferred or suggested, not confirmed.
 
+Suggested or enriched information should be clearly separated from source-confirmed information so the user can see what came from the document and what was added by the system.
+
 ## MVP Rule
 
 The schema should be strict enough for reliable JSON output but flexible enough to change by product type.
+
+## Future Extensions
+
+CSV and URL inputs may be added later, but they are future extensions, not MVP inputs. The MVP input set should remain PDF, TXT, and JSON.

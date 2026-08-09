@@ -7,58 +7,78 @@
 
 ## Phase 1: MVP Foundation
 
-| Status | Priority | Task                                                                  |
-| ------ | -------- | --------------------------------------------------------------------- |
-| TODO   | MUST     | Define the final MVP scope and freeze it before implementation starts |
-| TODO   | MUST     | Choose the MVP stack: Python + Streamlit + one LLM provider           |
-| TODO   | MUST     | Create sample input files for 2 to 3 product types                    |
-| TODO   | MUST     | Build a text extraction layer for PDF, TXT, and JSON                  |
-| TODO   | MUST     | Normalize all extracted content into one internal format              |
-| TODO   | MUST     | Define the product JSON schema and evidence format                    |
-| TODO   | MUST     | Implement product/category identification                             |
-| TODO   | MUST     | Implement dynamic attribute generation per product type               |
-| TODO   | MUST     | Implement AI-based structured attribute extraction                    |
-| TODO   | MUST     | Add missing attribute detection                                       |
-| TODO   | MUST     | Add simple deterministic validation checks                            |
-| TODO   | MUST     | Add conflict detection across multiple sources                        |
-| TODO   | MUST     | Add confidence scoring rules                                          |
-| TODO   | MUST     | Build a simple Streamlit interface                                    |
-| TODO   | MUST     | Add JSON export                                                       |
+| Status | Priority | Task                                |
+| ------ | -------- | ----------------------------------- |
+| TODO   | MUST     | Freeze MVP scope                    |
+| TODO   | MUST     | Prepare sample product data         |
+| TODO   | MUST     | Build PDF/TXT/JSON extraction       |
+| TODO   | MUST     | Normalize extracted source data     |
+| TODO   | MUST     | Define final product JSON schema    |
+| TODO   | MUST     | Product/category identification     |
+| TODO   | MUST     | Dynamic attribute schema generation |
+| TODO   | MUST     | AI structured attribute extraction  |
+| TODO   | MUST     | Missing attribute detection         |
+| TODO   | MUST     | Conflict detection                  |
+| TODO   | MUST     | Deterministic validation            |
+| TODO   | MUST     | Confidence calculation              |
+| TODO   | MUST     | Evidence/source tracking            |
+| TODO   | MUST     | Basic Streamlit UI                  |
+| TODO   | MUST     | JSON export                         |
+| TODO   | MUST     | End-to-end testing                  |
 
-## Phase 2: Improved Usability
+## Phase 2: Nice to Have
 
-| Status | Priority | Task                                           |
-| ------ | -------- | ---------------------------------------------- |
-| TODO   | SHOULD   | Add Excel/CSV input                            |
-| TODO   | SHOULD   | Improve the UI layout and result presentation  |
-| TODO   | SHOULD   | Add better error messages and input validation |
-| TODO   | SHOULD   | Add URL extraction if time permits             |
-| TODO   | SHOULD   | Add a product comparison view                  |
-| TODO   | SHOULD   | Add batch processing for several files at once |
+| Status | Priority | Task                                        |
+| ------ | -------- | ------------------------------------------- |
+| TODO   | SHOULD   | Improve UI layout and result presentation   |
+| TODO   | SHOULD   | Add clearer error messages and input checks |
+| TODO   | SHOULD   | Add Excel/CSV input                         |
+| TODO   | SHOULD   | Add URL input                               |
+| TODO   | SHOULD   | Add simple product comparison               |
+| TODO   | SHOULD   | Add batch processing for multiple files     |
 
-## Phase 3: Optional Stretch Goals
+## Phase 3: Stretch Goals
 
-| Status | Priority | Task                                                     |
-| ------ | -------- | -------------------------------------------------------- |
-| TODO   | COULD    | Add OCR/image extraction                                 |
-| TODO   | COULD    | Add large-catalog processing support                     |
-| TODO   | COULD    | Add cloud deployment                                     |
-| TODO   | COULD    | Add advanced analytics                                   |
-| TODO   | COULD    | Add vector database or RAG only if there is a clear need |
-| TODO   | COULD    | Add authentication only if the app becomes multi-user    |
+| Status | Priority | Task                                 |
+| ------ | -------- | ------------------------------------ |
+| TODO   | COULD    | Add OCR/image extraction             |
+| TODO   | COULD    | Add large catalog processing support |
+| TODO   | COULD    | Add cloud deployment                 |
+| TODO   | COULD    | Add advanced analytics               |
+| TODO   | COULD    | Add RAG or a vector database         |
+| TODO   | COULD    | Add authentication                   |
 
-## Suggested Work Order
+## Implementation Phases
+
+### Phase A: Scope and Data
 
 1. Freeze scope.
-2. Prepare sample data.
-3. Build extraction.
-4. Define the schema.
-5. Implement product identification and dynamic schema generation.
-6. Add LLM extraction.
-7. Add validation and conflict checks.
-8. Build the Streamlit UI.
-9. Add export and polish.
+2. Choose the 2 to 3 product categories for the demo.
+3. Prepare sample files for those categories.
+
+### Phase B: Extraction and Schema
+
+4. Build PDF/TXT/JSON extraction.
+5. Normalize all extracted content.
+6. Define the final product JSON schema.
+7. Implement product/category identification.
+8. Generate the dynamic attribute schema.
+
+### Phase C: Intelligence and Validation
+
+9. Add AI structured extraction.
+10. Add missing attribute detection.
+11. Add conflict detection.
+12. Add deterministic validation.
+13. Add confidence calculation.
+14. Add evidence/source tracking.
+
+### Phase D: Demo and Testing
+
+15. Build the basic Streamlit UI.
+16. Add JSON export.
+17. Run end-to-end testing.
 
 ## Notes
 
-The most important rule is to keep the first version small. If a feature does not clearly help product intelligence, accuracy, or the hackathon demo, it should wait.
+The MVP should stay small and believable. Anything that does not clearly improve product intelligence or the demo should stay out of the first version.
