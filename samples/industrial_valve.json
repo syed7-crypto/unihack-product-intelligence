@@ -1,0 +1,7 @@
+{
+  "product_name": "Acme AV-150 Industrial Valve",
+  "product_category": "Industrial valve",
+  "pressure_rating_psi": 150,
+  "connection": "2-inch ANSI flanged",
+  "body_material": "Stainless steel"
+}

@@ -1,0 +1,6 @@
+Acme AV-150 Industrial Valve
+Product category: Industrial valve
+Valve type: Ball valve
+Pressure rating: 150 PSI
+Connection: 2-inch ANSI flanged
+Body material: Stainless steel
