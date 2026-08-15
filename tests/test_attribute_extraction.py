@@ -34,6 +34,16 @@ def source_with_text(text: str) -> NormalizedSource:
     )
 
 
+def source_with_type(text: str, source_type: str, location: str = "document") -> NormalizedSource:
+    return NormalizedSource(
+        source_id="source-test",
+        source_type=source_type,
+        source_name=f"valve.{source_type}",
+        extracted_text=text,
+        locations=(SourceLocation(location, 1 if source_type == "pdf" else None),),
+    )
+
+
 def valve_schema() -> ProductIdentificationResult:
     return ProductIdentificationResult.model_validate(
         {
@@ -63,7 +73,111 @@ def found(name: str, value: str, quote: str) -> dict:
     }
 
 
+def found_for_source(
+    source: NormalizedSource,
+    name: str,
+    value: str,
+    quote: str,
+    location: str,
+) -> dict:
+    return {
+        "name": name,
+        "value": value,
+        "status": "found",
+        "evidence": {
+            "source_id": source.source_id,
+            "source_name": source.source_name,
+            "location": location,
+            "quote": quote,
+        },
+    }
+
+
 class AttributeExtractionTests(unittest.TestCase):
+    def test_value_not_supported_by_valid_quote_is_rejected(self) -> None:
+        source = source_with_text("Material: Stainless Steel")
+        response = {
+            "attributes": [
+                found("material", "Carbon Steel", "Material: Stainless Steel"),
+                {"name": "pressure_rating", "value": None, "status": "not_found"},
+                {"name": "connection_type", "value": None, "status": "not_found"},
+                {"name": "valve_type", "value": None, "status": "not_found"},
+            ]
+        }
+
+        with self.assertRaises(AttributeExtractionError):
+            extract_attribute_values(source, valve_schema(), FakeGeminiClient(json.dumps(response)))
+
+    def test_value_not_present_in_source_is_rejected(self) -> None:
+        source = source_with_text("Material: Stainless Steel. Pressure rating: 150 PSI")
+        response = {
+            "attributes": [
+                found("material", "Carbon Steel", "Pressure rating: 150 PSI"),
+                {"name": "pressure_rating", "value": None, "status": "not_found"},
+                {"name": "connection_type", "value": None, "status": "not_found"},
+                {"name": "valve_type", "value": None, "status": "not_found"},
+            ]
+        }
+
+        with self.assertRaises(AttributeExtractionError):
+            extract_attribute_values(source, valve_schema(), FakeGeminiClient(json.dumps(response)))
+
+    def test_case_and_whitespace_variation_between_value_and_quote_is_accepted(self) -> None:
+        source = source_with_text("Material: Stainless   Steel")
+        response = {
+            "attributes": [
+                found("material", " stainless steel ", "Material: Stainless   Steel"),
+                {"name": "pressure_rating", "value": None, "status": "not_found"},
+                {"name": "connection_type", "value": None, "status": "not_found"},
+                {"name": "valve_type", "value": None, "status": "not_found"},
+            ]
+        }
+
+        result = extract_attribute_values(source, valve_schema(), FakeGeminiClient(json.dumps(response)))
+
+        self.assertEqual(result.attributes[0].value, " stainless steel ")
+
+    def test_invalid_txt_location_is_rejected(self) -> None:
+        source = source_with_type("Material: Stainless Steel", "txt")
+        schema = ProductIdentificationResult.model_validate(
+            {"product_type": "Valve", "product_category": "Valve", "attributes": [{"name": "material", "label": "Material"}]}
+        )
+        response = {"attributes": [found_for_source(source, "material", "Stainless Steel", "Material: Stainless Steel", "page 99")]}
+
+        with self.assertRaises(AttributeExtractionError):
+            extract_attribute_values(source, schema, FakeGeminiClient(json.dumps(response)))
+
+    def test_invalid_json_location_is_rejected(self) -> None:
+        source = source_with_type('{"material": "Stainless Steel"}', "json")
+        schema = ProductIdentificationResult.model_validate(
+            {"product_type": "Valve", "product_category": "Valve", "attributes": [{"name": "material", "label": "Material"}]}
+        )
+        response = {"attributes": [found_for_source(source, "material", "Stainless Steel", '"material": "Stainless Steel"', "page 99")]}
+
+        with self.assertRaises(AttributeExtractionError):
+            extract_attribute_values(source, schema, FakeGeminiClient(json.dumps(response)))
+
+    def test_valid_pdf_location_is_accepted(self) -> None:
+        source = source_with_type("Material: Stainless Steel", "pdf", "page 1")
+        schema = ProductIdentificationResult.model_validate(
+            {"product_type": "Valve", "product_category": "Valve", "attributes": [{"name": "material", "label": "Material"}]}
+        )
+        response = {"attributes": [found_for_source(source, "material", "Stainless Steel", "Material: Stainless Steel", "page 1")]}
+
+        result = extract_attribute_values(source, schema, FakeGeminiClient(json.dumps(response)))
+
+        self.assertEqual(result.attributes[0].status, "found")
+
+    def test_invalid_pdf_location_is_rejected(self) -> None:
+        source = source_with_type("Material: Stainless Steel", "pdf", "page 1")
+        schema = ProductIdentificationResult.model_validate(
+            {"product_type": "Valve", "product_category": "Valve", "attributes": [{"name": "material", "label": "Material"}]}
+        )
+        response = {"attributes": [found_for_source(source, "material", "Stainless Steel", "Material: Stainless Steel", "page 2")]}
+
+        with self.assertRaises(AttributeExtractionError):
+            extract_attribute_values(source, schema, FakeGeminiClient(json.dumps(response)))
+
     def test_values_are_extracted_from_an_industrial_source(self) -> None:
         source = source_with_text(
             "Industrial valve with stainless steel body, 150 PSI pressure rating "

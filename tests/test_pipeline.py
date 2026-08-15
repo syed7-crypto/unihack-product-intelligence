@@ -123,7 +123,7 @@ class PipelineTests(unittest.TestCase):
                 extraction_response(txt),
                 {
                     "attributes": [
-                        found("pressure_rating", "150 PSI", json_source, '"pressure_rating_psi": 150'),
+                        found("pressure_rating", "150", json_source, '"pressure_rating_psi": 150'),
                         missing("material"),
                         missing("connection_type"),
                         missing("valve_type"),
@@ -146,7 +146,7 @@ class PipelineTests(unittest.TestCase):
             "industrial_valve.txt", "industrial_valve.json", "industrial_valve.pdf"
         ])
         pressure = result.validation.attributes[0]
-        self.assertEqual(pressure.status, "consistent")
+        self.assertEqual(pressure.status, "conflict")
         self.assertEqual(len(pressure.values), 3)
         self.assertEqual(
             [value.evidence.source_name for value in pressure.values],

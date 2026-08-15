@@ -120,10 +120,12 @@ def _validate_against_input(
             raise ValueError(f"Evidence for '{attribute.name}' references another source.")
         if not _quote_occurs_in_source(evidence.quote, source.extracted_text):
             raise ValueError(f"Evidence quote for '{attribute.name}' is not in the source.")
-        if evidence.location and source.source_type == "pdf":
+        if not attribute.value.strip() or not _quote_occurs_in_source(attribute.value, evidence.quote):
+            raise ValueError(f"Value for '{attribute.name}' is not supported by its evidence quote.")
+        if evidence.location:
             known_locations = {location.label for location in source.locations}
             if evidence.location not in known_locations:
-                raise ValueError(f"Unknown PDF location '{evidence.location}'.")
+                raise ValueError(f"Unknown source location '{evidence.location}'.")
 
 
 def _quote_occurs_in_source(quote: str, source_text: str) -> bool:
