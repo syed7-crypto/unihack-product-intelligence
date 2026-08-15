@@ -32,6 +32,28 @@ from .unit_normalization import (
     measurements_equivalent,
     normalize_measurement,
 )
+from .catalog_input import (
+    CatalogInputError,
+    CatalogInputRow,
+    brand_candidate,
+    is_placeholder_brand,
+    load_catalog_rows,
+    select_catalog_row,
+)
+from .delivery_schema import (
+    DeliverySchema,
+    DeliverySchemaError,
+    EXPECTED_DELIVERY_COLUMN_COUNT,
+    load_delivery_rows,
+    load_delivery_schema,
+    select_delivery_row,
+)
+from .delivery_output import (
+    DeliveryComparison,
+    DeliveryFieldDifference,
+    compare_delivery_rows,
+    map_raw_fields_to_delivery,
+)
 
 __all__ = [
     "AttributeEvidence",
@@ -56,4 +78,20 @@ __all__ = [
     "NormalizedMeasurement",
     "measurements_equivalent",
     "normalize_measurement",
+    "CatalogInputError",
+    "CatalogInputRow",
+    "brand_candidate",
+    "is_placeholder_brand",
+    "load_catalog_rows",
+    "select_catalog_row",
+    "DeliverySchema",
+    "DeliverySchemaError",
+    "EXPECTED_DELIVERY_COLUMN_COUNT",
+    "load_delivery_rows",
+    "load_delivery_schema",
+    "select_delivery_row",
+    "DeliveryComparison",
+    "DeliveryFieldDifference",
+    "compare_delivery_rows",
+    "map_raw_fields_to_delivery",
 ]
