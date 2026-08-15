@@ -1,0 +1,771 @@
+{
+  "sources": [
+    {
+      "source_id": "d0304d0e9b3db2fd",
+      "source_type": "pdf",
+      "source_name": "valve_datasheet.pdf",
+      "locations": [
+        "page 1"
+      ]
+    },
+    {
+      "source_id": "bcea072885ea39dd",
+      "source_type": "txt",
+      "source_name": "valve_description.txt",
+      "locations": [
+        "document"
+      ]
+    },
+    {
+      "source_id": "a644838458216269",
+      "source_type": "json",
+      "source_name": "valve_product.json",
+      "locations": [
+        "document"
+      ]
+    }
+  ],
+  "product_identification": {
+    "product_type": "Ball Valve",
+    "product_category": "Industrial Valve",
+    "attributes": [
+      {
+        "name": "material",
+        "label": "Material",
+        "data_type": "string",
+        "unit": null,
+        "required": false,
+        "description": "Construction material of the valve body."
+      },
+      {
+        "name": "connection_type",
+        "label": "Connection Type",
+        "data_type": "string",
+        "unit": null,
+        "required": false,
+        "description": "Type of end connection for the valve."
+      },
+      {
+        "name": "pressure_rating",
+        "label": "Pressure Rating",
+        "data_type": "number",
+        "unit": "PSI",
+        "required": false,
+        "description": "Maximum working pressure rating."
+      },
+      {
+        "name": "valve_type",
+        "label": "Valve Type",
+        "data_type": "string",
+        "unit": null,
+        "required": false,
+        "description": "Specific mechanism type of the valve."
+      },
+      {
+        "name": "nominal_size",
+        "label": "Nominal Size",
+        "data_type": "number",
+        "unit": "inch",
+        "required": false,
+        "description": "Nominal pipe size of the valve."
+      },
+      {
+        "name": "seat_material",
+        "label": "Seat Material",
+        "data_type": "string",
+        "unit": null,
+        "required": false,
+        "description": "Material used for the internal valve seat."
+      },
+      {
+        "name": "actuation_type",
+        "label": "Actuation Type",
+        "data_type": "string",
+        "unit": null,
+        "required": false,
+        "description": "Method or mechanism used to actuate the valve."
+      },
+      {
+        "name": "temperature_range",
+        "label": "Temperature Range",
+        "data_type": "string",
+        "unit": null,
+        "required": false,
+        "description": "Operating temperature limits for the valve."
+      }
+    ]
+  },
+  "dynamic_attribute_schema": [
+    {
+      "name": "material",
+      "label": "Material",
+      "data_type": "string",
+      "unit": null,
+      "required": false,
+      "description": "Construction material of the valve body."
+    },
+    {
+      "name": "connection_type",
+      "label": "Connection Type",
+      "data_type": "string",
+      "unit": null,
+      "required": false,
+      "description": "Type of end connection for the valve."
+    },
+    {
+      "name": "pressure_rating",
+      "label": "Pressure Rating",
+      "data_type": "number",
+      "unit": "PSI",
+      "required": false,
+      "description": "Maximum working pressure rating."
+    },
+    {
+      "name": "valve_type",
+      "label": "Valve Type",
+      "data_type": "string",
+      "unit": null,
+      "required": false,
+      "description": "Specific mechanism type of the valve."
+    },
+    {
+      "name": "nominal_size",
+      "label": "Nominal Size",
+      "data_type": "number",
+      "unit": "inch",
+      "required": false,
+      "description": "Nominal pipe size of the valve."
+    },
+    {
+      "name": "seat_material",
+      "label": "Seat Material",
+      "data_type": "string",
+      "unit": null,
+      "required": false,
+      "description": "Material used for the internal valve seat."
+    },
+    {
+      "name": "actuation_type",
+      "label": "Actuation Type",
+      "data_type": "string",
+      "unit": null,
+      "required": false,
+      "description": "Method or mechanism used to actuate the valve."
+    },
+    {
+      "name": "temperature_range",
+      "label": "Temperature Range",
+      "data_type": "string",
+      "unit": null,
+      "required": false,
+      "description": "Operating temperature limits for the valve."
+    }
+  ],
+  "extracted_attributes": [
+    {
+      "attributes": [
+        {
+          "name": "material",
+          "value": "Stainless Steel",
+          "status": "found",
+          "evidence": {
+            "source_id": "d0304d0e9b3db2fd",
+            "source_name": "valve_datasheet.pdf",
+            "location": "page 1",
+            "quote": "Material: Stainless Steel"
+          }
+        },
+        {
+          "name": "connection_type",
+          "value": "Flanged",
+          "status": "found",
+          "evidence": {
+            "source_id": "d0304d0e9b3db2fd",
+            "source_name": "valve_datasheet.pdf",
+            "location": "page 1",
+            "quote": "Connection: Flanged"
+          }
+        },
+        {
+          "name": "pressure_rating",
+          "value": "150 PSI",
+          "status": "found",
+          "evidence": {
+            "source_id": "d0304d0e9b3db2fd",
+            "source_name": "valve_datasheet.pdf",
+            "location": "page 1",
+            "quote": "Pressure Rating: 150 PSI"
+          }
+        },
+        {
+          "name": "valve_type",
+          "value": "Ball valve",
+          "status": "found",
+          "evidence": {
+            "source_id": "d0304d0e9b3db2fd",
+            "source_name": "valve_datasheet.pdf",
+            "location": "page 1",
+            "quote": "Valve Type: Ball valve"
+          }
+        },
+        {
+          "name": "nominal_size",
+          "value": "2 inch",
+          "status": "found",
+          "evidence": {
+            "source_id": "d0304d0e9b3db2fd",
+            "source_name": "valve_datasheet.pdf",
+            "location": "page 1",
+            "quote": "Nominal Size: 2 inch"
+          }
+        },
+        {
+          "name": "seat_material",
+          "value": "PTFE",
+          "status": "found",
+          "evidence": {
+            "source_id": "d0304d0e9b3db2fd",
+            "source_name": "valve_datasheet.pdf",
+            "location": "page 1",
+            "quote": "Seat Material: PTFE"
+          }
+        },
+        {
+          "name": "actuation_type",
+          "value": "Manual lever",
+          "status": "found",
+          "evidence": {
+            "source_id": "d0304d0e9b3db2fd",
+            "source_name": "valve_datasheet.pdf",
+            "location": "page 1",
+            "quote": "Actuation: Manual lever"
+          }
+        },
+        {
+          "name": "temperature_range",
+          "value": null,
+          "status": "not_found",
+          "evidence": null
+        }
+      ]
+    },
+    {
+      "attributes": [
+        {
+          "name": "material",
+          "value": "Stainless Steel",
+          "status": "found",
+          "evidence": {
+            "source_id": "bcea072885ea39dd",
+            "source_name": "valve_description.txt",
+            "location": "document",
+            "quote": "Material: Stainless Steel"
+          }
+        },
+        {
+          "name": "connection_type",
+          "value": "Flanged",
+          "status": "found",
+          "evidence": {
+            "source_id": "bcea072885ea39dd",
+            "source_name": "valve_description.txt",
+            "location": "document",
+            "quote": "Connection: Flanged"
+          }
+        },
+        {
+          "name": "pressure_rating",
+          "value": "120 PSI",
+          "status": "found",
+          "evidence": {
+            "source_id": "bcea072885ea39dd",
+            "source_name": "valve_description.txt",
+            "location": "document",
+            "quote": "Pressure rating: 120 PSI"
+          }
+        },
+        {
+          "name": "valve_type",
+          "value": "Ball valve",
+          "status": "found",
+          "evidence": {
+            "source_id": "bcea072885ea39dd",
+            "source_name": "valve_description.txt",
+            "location": "document",
+            "quote": "Valve type: Ball valve"
+          }
+        },
+        {
+          "name": "nominal_size",
+          "value": "2 inch",
+          "status": "found",
+          "evidence": {
+            "source_id": "bcea072885ea39dd",
+            "source_name": "valve_description.txt",
+            "location": "document",
+            "quote": "Nominal size: 2 inch"
+          }
+        },
+        {
+          "name": "seat_material",
+          "value": "PTFE",
+          "status": "found",
+          "evidence": {
+            "source_id": "bcea072885ea39dd",
+            "source_name": "valve_description.txt",
+            "location": "document",
+            "quote": "Seat material: PTFE"
+          }
+        },
+        {
+          "name": "actuation_type",
+          "value": null,
+          "status": "not_found",
+          "evidence": null
+        },
+        {
+          "name": "temperature_range",
+          "value": null,
+          "status": "not_found",
+          "evidence": null
+        }
+      ]
+    },
+    {
+      "attributes": [
+        {
+          "name": "material",
+          "value": "Stainless Steel",
+          "status": "found",
+          "evidence": {
+            "source_id": "a644838458216269",
+            "source_name": "valve_product.json",
+            "location": "document",
+            "quote": "\"material\": \"Stainless Steel\""
+          }
+        },
+        {
+          "name": "connection_type",
+          "value": "Flanged",
+          "status": "found",
+          "evidence": {
+            "source_id": "a644838458216269",
+            "source_name": "valve_product.json",
+            "location": "document",
+            "quote": "\"connection\": \"Flanged\""
+          }
+        },
+        {
+          "name": "pressure_rating",
+          "value": "150 PSI",
+          "status": "found",
+          "evidence": {
+            "source_id": "a644838458216269",
+            "source_name": "valve_product.json",
+            "location": "document",
+            "quote": "\"pressure_rating\": \"150 PSI\""
+          }
+        },
+        {
+          "name": "valve_type",
+          "value": "Ball valve",
+          "status": "found",
+          "evidence": {
+            "source_id": "a644838458216269",
+            "source_name": "valve_product.json",
+            "location": "document",
+            "quote": "\"valve_type\": \"Ball valve\""
+          }
+        },
+        {
+          "name": "nominal_size",
+          "value": "2 inch",
+          "status": "found",
+          "evidence": {
+            "source_id": "a644838458216269",
+            "source_name": "valve_product.json",
+            "location": "document",
+            "quote": "\"nominal_size\": \"2 inch\""
+          }
+        },
+        {
+          "name": "seat_material",
+          "value": "PTFE",
+          "status": "found",
+          "evidence": {
+            "source_id": "a644838458216269",
+            "source_name": "valve_product.json",
+            "location": "document",
+            "quote": "\"seat_material\": \"PTFE\""
+          }
+        },
+        {
+          "name": "actuation_type",
+          "value": "Manual lever",
+          "status": "found",
+          "evidence": {
+            "source_id": "a644838458216269",
+            "source_name": "valve_product.json",
+            "location": "document",
+            "quote": "\"actuation\": \"Manual lever\""
+          }
+        },
+        {
+          "name": "temperature_range",
+          "value": null,
+          "status": "not_found",
+          "evidence": null
+        }
+      ]
+    }
+  ],
+  "validation": {
+    "attributes": [
+      {
+        "name": "material",
+        "values": [
+          {
+            "value": "Stainless Steel",
+            "evidence": {
+              "source_id": "d0304d0e9b3db2fd",
+              "source_name": "valve_datasheet.pdf",
+              "location": "page 1",
+              "quote": "Material: Stainless Steel"
+            }
+          },
+          {
+            "value": "Stainless Steel",
+            "evidence": {
+              "source_id": "bcea072885ea39dd",
+              "source_name": "valve_description.txt",
+              "location": "document",
+              "quote": "Material: Stainless Steel"
+            }
+          },
+          {
+            "value": "Stainless Steel",
+            "evidence": {
+              "source_id": "a644838458216269",
+              "source_name": "valve_product.json",
+              "location": "document",
+              "quote": "\"material\": \"Stainless Steel\""
+            }
+          }
+        ],
+        "status": "consistent",
+        "conflict": null
+      },
+      {
+        "name": "connection_type",
+        "values": [
+          {
+            "value": "Flanged",
+            "evidence": {
+              "source_id": "d0304d0e9b3db2fd",
+              "source_name": "valve_datasheet.pdf",
+              "location": "page 1",
+              "quote": "Connection: Flanged"
+            }
+          },
+          {
+            "value": "Flanged",
+            "evidence": {
+              "source_id": "bcea072885ea39dd",
+              "source_name": "valve_description.txt",
+              "location": "document",
+              "quote": "Connection: Flanged"
+            }
+          },
+          {
+            "value": "Flanged",
+            "evidence": {
+              "source_id": "a644838458216269",
+              "source_name": "valve_product.json",
+              "location": "document",
+              "quote": "\"connection\": \"Flanged\""
+            }
+          }
+        ],
+        "status": "consistent",
+        "conflict": null
+      },
+      {
+        "name": "pressure_rating",
+        "values": [
+          {
+            "value": "150 PSI",
+            "evidence": {
+              "source_id": "d0304d0e9b3db2fd",
+              "source_name": "valve_datasheet.pdf",
+              "location": "page 1",
+              "quote": "Pressure Rating: 150 PSI"
+            }
+          },
+          {
+            "value": "120 PSI",
+            "evidence": {
+              "source_id": "bcea072885ea39dd",
+              "source_name": "valve_description.txt",
+              "location": "document",
+              "quote": "Pressure rating: 120 PSI"
+            }
+          },
+          {
+            "value": "150 PSI",
+            "evidence": {
+              "source_id": "a644838458216269",
+              "source_name": "valve_product.json",
+              "location": "document",
+              "quote": "\"pressure_rating\": \"150 PSI\""
+            }
+          }
+        ],
+        "status": "conflict",
+        "conflict": {
+          "distinct_values": [
+            "150 PSI",
+            "120 PSI"
+          ],
+          "reason": "Sources provide different values after safe normalization."
+        }
+      },
+      {
+        "name": "valve_type",
+        "values": [
+          {
+            "value": "Ball valve",
+            "evidence": {
+              "source_id": "d0304d0e9b3db2fd",
+              "source_name": "valve_datasheet.pdf",
+              "location": "page 1",
+              "quote": "Valve Type: Ball valve"
+            }
+          },
+          {
+            "value": "Ball valve",
+            "evidence": {
+              "source_id": "bcea072885ea39dd",
+              "source_name": "valve_description.txt",
+              "location": "document",
+              "quote": "Valve type: Ball valve"
+            }
+          },
+          {
+            "value": "Ball valve",
+            "evidence": {
+              "source_id": "a644838458216269",
+              "source_name": "valve_product.json",
+              "location": "document",
+              "quote": "\"valve_type\": \"Ball valve\""
+            }
+          }
+        ],
+        "status": "consistent",
+        "conflict": null
+      },
+      {
+        "name": "nominal_size",
+        "values": [
+          {
+            "value": "2 inch",
+            "evidence": {
+              "source_id": "d0304d0e9b3db2fd",
+              "source_name": "valve_datasheet.pdf",
+              "location": "page 1",
+              "quote": "Nominal Size: 2 inch"
+            }
+          },
+          {
+            "value": "2 inch",
+            "evidence": {
+              "source_id": "bcea072885ea39dd",
+              "source_name": "valve_description.txt",
+              "location": "document",
+              "quote": "Nominal size: 2 inch"
+            }
+          },
+          {
+            "value": "2 inch",
+            "evidence": {
+              "source_id": "a644838458216269",
+              "source_name": "valve_product.json",
+              "location": "document",
+              "quote": "\"nominal_size\": \"2 inch\""
+            }
+          }
+        ],
+        "status": "consistent",
+        "conflict": null
+      },
+      {
+        "name": "seat_material",
+        "values": [
+          {
+            "value": "PTFE",
+            "evidence": {
+              "source_id": "d0304d0e9b3db2fd",
+              "source_name": "valve_datasheet.pdf",
+              "location": "page 1",
+              "quote": "Seat Material: PTFE"
+            }
+          },
+          {
+            "value": "PTFE",
+            "evidence": {
+              "source_id": "bcea072885ea39dd",
+              "source_name": "valve_description.txt",
+              "location": "document",
+              "quote": "Seat material: PTFE"
+            }
+          },
+          {
+            "value": "PTFE",
+            "evidence": {
+              "source_id": "a644838458216269",
+              "source_name": "valve_product.json",
+              "location": "document",
+              "quote": "\"seat_material\": \"PTFE\""
+            }
+          }
+        ],
+        "status": "consistent",
+        "conflict": null
+      },
+      {
+        "name": "actuation_type",
+        "values": [
+          {
+            "value": "Manual lever",
+            "evidence": {
+              "source_id": "d0304d0e9b3db2fd",
+              "source_name": "valve_datasheet.pdf",
+              "location": "page 1",
+              "quote": "Actuation: Manual lever"
+            }
+          },
+          {
+            "value": "Manual lever",
+            "evidence": {
+              "source_id": "a644838458216269",
+              "source_name": "valve_product.json",
+              "location": "document",
+              "quote": "\"actuation\": \"Manual lever\""
+            }
+          }
+        ],
+        "status": "consistent",
+        "conflict": null
+      },
+      {
+        "name": "temperature_range",
+        "values": [],
+        "status": "not_found",
+        "conflict": null
+      }
+    ]
+  },
+  "confidence": {
+    "attributes": [
+      {
+        "name": "material",
+        "score": 0.9,
+        "level": "high",
+        "reasons": [
+          "Evidence was preserved for the extracted value",
+          "Direct supporting quotes were found",
+          "Source location metadata was available",
+          "3 sources provide the attribute",
+          "Multiple sources agree",
+          "No cross-source conflict was detected"
+        ]
+      },
+      {
+        "name": "connection_type",
+        "score": 0.9,
+        "level": "high",
+        "reasons": [
+          "Evidence was preserved for the extracted value",
+          "Direct supporting quotes were found",
+          "Source location metadata was available",
+          "3 sources provide the attribute",
+          "Multiple sources agree",
+          "No cross-source conflict was detected"
+        ]
+      },
+      {
+        "name": "pressure_rating",
+        "score": 0.35,
+        "level": "low",
+        "reasons": [
+          "Evidence was preserved for the extracted value",
+          "Direct supporting quotes were found",
+          "Source location metadata was available",
+          "3 sources provide the attribute",
+          "Sources provide different values",
+          "Conflict requires review"
+        ]
+      },
+      {
+        "name": "valve_type",
+        "score": 0.9,
+        "level": "high",
+        "reasons": [
+          "Evidence was preserved for the extracted value",
+          "Direct supporting quotes were found",
+          "Source location metadata was available",
+          "3 sources provide the attribute",
+          "Multiple sources agree",
+          "No cross-source conflict was detected"
+        ]
+      },
+      {
+        "name": "nominal_size",
+        "score": 0.9,
+        "level": "high",
+        "reasons": [
+          "Evidence was preserved for the extracted value",
+          "Direct supporting quotes were found",
+          "Source location metadata was available",
+          "3 sources provide the attribute",
+          "Multiple sources agree",
+          "No cross-source conflict was detected"
+        ]
+      },
+      {
+        "name": "seat_material",
+        "score": 0.9,
+        "level": "high",
+        "reasons": [
+          "Evidence was preserved for the extracted value",
+          "Direct supporting quotes were found",
+          "Source location metadata was available",
+          "3 sources provide the attribute",
+          "Multiple sources agree",
+          "No cross-source conflict was detected"
+        ]
+      },
+      {
+        "name": "actuation_type",
+        "score": 0.9,
+        "level": "high",
+        "reasons": [
+          "Evidence was preserved for the extracted value",
+          "Direct supporting quotes were found",
+          "Source location metadata was available",
+          "2 sources provide the attribute",
+          "Multiple sources agree",
+          "No cross-source conflict was detected"
+        ]
+      },
+      {
+        "name": "temperature_range",
+        "score": 0.0,
+        "level": "low",
+        "reasons": [
+          "No source provided a value",
+          "Confidence is zero because the attribute was not found"
+        ]
+      }
+    ]
+  }
+}

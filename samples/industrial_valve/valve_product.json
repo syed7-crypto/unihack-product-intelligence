@@ -1,0 +1,13 @@
+{
+  "product_name": "Stainless Steel Ball Valve",
+  "product_status": "Fictional sample product for testing only",
+  "product_category": "Industrial valve",
+  "material": "Stainless Steel",
+  "connection": "Flanged",
+  "pressure_rating": "150 PSI",
+  "valve_type": "Ball valve",
+  "nominal_size": "2 inch",
+  "seat_material": "PTFE",
+  "actuation": "Manual lever",
+  "temperature_range": null
+}
