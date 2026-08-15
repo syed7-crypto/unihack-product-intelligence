@@ -4,12 +4,16 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from typing import TypeVar
 
 from dotenv import load_dotenv
 from google import genai
+from google.genai import types
+from pydantic import BaseModel
 
 
 DEFAULT_GEMINI_MODEL = "gemini-3.6-flash"
+ResponseModel = TypeVar("ResponseModel", bound=BaseModel)
 
 
 class GeminiClient:
@@ -36,6 +40,28 @@ class GeminiClient:
         response = self._client.models.generate_content(
             model=self.model,
             contents=prompt,
+        )
+        response_text = response.text
+        if not response_text:
+            raise RuntimeError("Gemini returned an empty response.")
+        return response_text
+
+    def generate_structured_json(
+        self,
+        prompt: str,
+        response_schema: type[ResponseModel],
+    ) -> str:
+        """Send a prompt and request JSON matching a Pydantic response schema."""
+        if not prompt.strip():
+            raise ValueError("The Gemini prompt must not be empty.")
+
+        response = self._client.models.generate_content(
+            model=self.model,
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json",
+                response_schema=response_schema,
+            ),
         )
         response_text = response.text
         if not response_text:
