@@ -7,6 +7,15 @@ from .attribute_extraction import (
     ExtractedAttribute,
     extract_attribute_values,
 )
+from .cross_source_validation import (
+    ConflictInfo,
+    CrossSourceValidationError,
+    CrossSourceValidationResult,
+    SourceAttributeValue,
+    ValidatedAttribute,
+    normalize_for_comparison,
+    validate_cross_source,
+)
 
 __all__ = [
     "AttributeEvidence",
@@ -14,4 +23,11 @@ __all__ = [
     "AttributeExtractionResult",
     "ExtractedAttribute",
     "extract_attribute_values",
+    "ConflictInfo",
+    "CrossSourceValidationError",
+    "CrossSourceValidationResult",
+    "SourceAttributeValue",
+    "ValidatedAttribute",
+    "normalize_for_comparison",
+    "validate_cross_source",
 ]
