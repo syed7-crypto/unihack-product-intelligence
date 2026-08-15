@@ -54,6 +54,19 @@ from .delivery_output import (
     compare_delivery_rows,
     map_raw_fields_to_delivery,
 )
+from .reference_data import (
+    AttributeReference,
+    AttributeRule,
+    BrandReference,
+    CatalogReferenceResolution,
+    ManufacturerReference,
+    ReferenceResolutionResult,
+    TaxonomyPath,
+    TaxonomyReference,
+    UOMReference,
+    normalize_reference_value,
+    resolve_catalog_row_references,
+)
 
 __all__ = [
     "AttributeEvidence",
@@ -94,4 +107,15 @@ __all__ = [
     "DeliveryFieldDifference",
     "compare_delivery_rows",
     "map_raw_fields_to_delivery",
+    "AttributeReference",
+    "AttributeRule",
+    "BrandReference",
+    "CatalogReferenceResolution",
+    "ManufacturerReference",
+    "ReferenceResolutionResult",
+    "TaxonomyPath",
+    "TaxonomyReference",
+    "UOMReference",
+    "normalize_reference_value",
+    "resolve_catalog_row_references",
 ]
