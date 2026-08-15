@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from .attribute_extraction import AttributeEvidence, AttributeExtractionResult
 from .product_identification import ProductIdentificationResult
+from .unit_normalization import measurements_equivalent
 
 
 class SourceAttributeValue(BaseModel):
@@ -98,14 +99,14 @@ def _validate_attribute(
     if len(values) == 1:
         return ValidatedAttribute(name=name, values=values, status="single_source")
 
+    if _all_values_equivalent(values):
+        return ValidatedAttribute(name=name, values=values, status="consistent")
+
     normalized_to_original: dict[str, str] = {}
     for source_value in values:
         normalized_to_original.setdefault(
             normalize_for_comparison(source_value.value), source_value.value
         )
-
-    if len(normalized_to_original) == 1:
-        return ValidatedAttribute(name=name, values=values, status="consistent")
 
     return ValidatedAttribute(
         name=name,
@@ -113,6 +114,18 @@ def _validate_attribute(
         status="conflict",
         conflict=ConflictInfo(distinct_values=list(normalized_to_original.values())),
     )
+
+
+def _all_values_equivalent(values: list[SourceAttributeValue]) -> bool:
+    """Use unit comparison when possible, otherwise retain old string behavior."""
+    first_value = values[0].value
+    for source_value in values[1:]:
+        unit_result = measurements_equivalent(first_value, source_value.value)
+        if unit_result is False:
+            return False
+        if unit_result is None and normalize_for_comparison(first_value) != normalize_for_comparison(source_value.value):
+            return False
+    return True
 
 
 def normalize_for_comparison(value: str) -> str:

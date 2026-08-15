@@ -53,6 +53,42 @@ def extraction(*attributes: ExtractedAttribute) -> AttributeExtractionResult:
 
 
 class CrossSourceValidationTests(unittest.TestCase):
+    def test_equivalent_values_in_different_units_are_consistent(self) -> None:
+        result = validate_cross_source(
+            [
+                extraction(source_value("a", "metric.txt", "2 m", "document"), not_found("material"), not_found("connection_type")),
+                extraction(source_value("b", "centimeters.txt", "200 cm", "document"), not_found("material"), not_found("connection_type")),
+            ],
+            product_schema(),
+        )
+
+        pressure = result.attributes[0]
+        self.assertEqual(pressure.status, "consistent")
+        self.assertEqual([item.value for item in pressure.values], ["2 m", "200 cm"])
+        self.assertEqual([item.evidence.source_name for item in pressure.values], ["metric.txt", "centimeters.txt"])
+
+    def test_different_dimensions_remain_a_conflict(self) -> None:
+        result = validate_cross_source(
+            [
+                extraction(source_value("a", "length.txt", "2 m", "document"), not_found("material"), not_found("connection_type")),
+                extraction(source_value("b", "mass.txt", "2 kg", "document"), not_found("material"), not_found("connection_type")),
+            ],
+            product_schema(),
+        )
+
+        self.assertEqual(result.attributes[0].status, "conflict")
+
+    def test_non_measurement_values_keep_existing_comparison_behavior(self) -> None:
+        result = validate_cross_source(
+            [
+                extraction(source_value("a", "a.txt", "IP67", "document"), not_found("material"), not_found("connection_type")),
+                extraction(source_value("b", "b.txt", "ip67", "document"), not_found("material"), not_found("connection_type")),
+            ],
+            product_schema(),
+        )
+
+        self.assertEqual(result.attributes[0].status, "consistent")
+
     def test_identical_values_are_consistent(self) -> None:
         result = validate_cross_source(
             [

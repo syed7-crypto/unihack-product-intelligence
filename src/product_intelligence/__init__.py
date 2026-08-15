@@ -27,6 +27,11 @@ from .pipeline import (
     SourceSummary,
     run_pipeline,
 )
+from .unit_normalization import (
+    NormalizedMeasurement,
+    measurements_equivalent,
+    normalize_measurement,
+)
 
 __all__ = [
     "AttributeEvidence",
@@ -48,4 +53,7 @@ __all__ = [
     "ProductIntelligenceResult",
     "SourceSummary",
     "run_pipeline",
+    "NormalizedMeasurement",
+    "measurements_equivalent",
+    "normalize_measurement",
 ]
