@@ -21,6 +21,12 @@ from .confidence_scoring import (
     ConfidenceScoringResult,
     calculate_confidence,
 )
+from .pipeline import (
+    ProductIntelligencePipelineError,
+    ProductIntelligenceResult,
+    SourceSummary,
+    run_pipeline,
+)
 
 __all__ = [
     "AttributeEvidence",
@@ -38,4 +44,8 @@ __all__ = [
     "ConfidenceAssessment",
     "ConfidenceScoringResult",
     "calculate_confidence",
+    "ProductIntelligencePipelineError",
+    "ProductIntelligenceResult",
+    "SourceSummary",
+    "run_pipeline",
 ]
