@@ -16,6 +16,11 @@ from .cross_source_validation import (
     normalize_for_comparison,
     validate_cross_source,
 )
+from .confidence_scoring import (
+    ConfidenceAssessment,
+    ConfidenceScoringResult,
+    calculate_confidence,
+)
 
 __all__ = [
     "AttributeEvidence",
@@ -30,4 +35,7 @@ __all__ = [
     "ValidatedAttribute",
     "normalize_for_comparison",
     "validate_cross_source",
+    "ConfidenceAssessment",
+    "ConfidenceScoringResult",
+    "calculate_confidence",
 ]
