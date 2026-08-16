@@ -103,6 +103,22 @@ class ManufacturerEnrichmentProvider:
         self.timeout = timeout
         self._fetcher = fetcher or _fetch_url
 
+    def with_approved_domains(
+        self,
+        approved_domains: set[str] | frozenset[str],
+    ) -> "ManufacturerEnrichmentProvider":
+        """Return a verifier with an explicit policy-scoped domain allowlist.
+
+        The transport, timeout, and exact-MPN verification implementation are
+        reused unchanged. This is used when a selected discovery policy must
+        be passed into the retrieval boundary.
+        """
+        return ManufacturerEnrichmentProvider(
+            approved_domains=approved_domains,
+            timeout=self.timeout,
+            fetcher=self._fetcher,
+        )
+
     def retrieve_source(self, url: str, expected_mpn: str) -> RetrievalResult:
         """Fetch and verify one explicitly approved manufacturer URL."""
         try:

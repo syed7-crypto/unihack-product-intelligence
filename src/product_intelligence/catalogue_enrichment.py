@@ -134,6 +134,8 @@ def enrich_catalogue_row(
     uom_reference: UOMReference | None = None,
     attribute_mappings: AttributeDeliveryMappings | None = None,
     expected_delivery_row: dict[str, str] | None = None,
+    verified_sources: Sequence[ManufacturerSource] | None = None,
+    initial_source_diagnostics: Sequence[EnrichmentSourceDiagnostic] = (),
 ) -> CatalogueEnrichmentResult:
     """Enrich one row using only explicit, exact-MPN-verified sources.
 
@@ -141,7 +143,7 @@ def enrich_catalogue_row(
     the result contains only the preserved raw catalogue fields and no
     pipeline result or enrichment values.
     """
-    if not source_urls:
+    if not source_urls and verified_sources is None:
         raise CatalogueEnrichmentError("At least one explicit source URL is required.")
 
     provider = provider or ManufacturerEnrichmentProvider()
@@ -153,7 +155,46 @@ def enrich_catalogue_row(
     _map_resolved_identity(delivery_row, reference_resolution)
 
     normalized_sources = []
-    diagnostics: list[EnrichmentSourceDiagnostic] = []
+    diagnostics: list[EnrichmentSourceDiagnostic] = list(initial_source_diagnostics)
+
+    for source in verified_sources or ():
+        if not source.exact_mpn_verified:
+            diagnostics.append(
+                EnrichmentSourceDiagnostic(
+                    url=source.url,
+                    success=False,
+                    source_type=source.source_type,
+                    source_name=source.source_name,
+                    error="Source was not marked as exact-MPN-verified.",
+                )
+            )
+            continue
+        try:
+            normalized = provider.to_normalized_source(source)
+        except Exception as error:
+            diagnostics.append(
+                EnrichmentSourceDiagnostic(
+                    url=source.url,
+                    success=False,
+                    source_type=source.source_type,
+                    source_name=source.source_name,
+                    exact_mpn_verified=source.exact_mpn_verified,
+                    error=f"Source normalization failed: {error}",
+                )
+            )
+            continue
+        normalized_sources.append(normalized)
+        diagnostics.append(
+            EnrichmentSourceDiagnostic(
+                url=source.url,
+                success=True,
+                source_type=source.source_type,
+                source_id=normalized.source_id,
+                source_name=normalized.source_name,
+                exact_mpn_verified=source.exact_mpn_verified,
+            )
+        )
+
     for url in source_urls:
         retrieval = provider.retrieve_source(url, catalogue_row.Mfg_Part_Num)
         if not retrieval.success or retrieval.source is None:

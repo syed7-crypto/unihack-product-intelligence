@@ -607,6 +607,9 @@ def discover_and_verify_sources(
     )
     verified_sources: list[ManufacturerSource] = []
     diagnostics: list[SourceVerificationDiagnostic] = []
+    verification_provider = enrichment_provider.with_approved_domains(
+        frozenset(policy.approved_domains)
+    )
     manufacturer_unresolved = (
         manufacturer_reference is not None
         and manufacturer_reference.status != "resolved"
@@ -626,7 +629,9 @@ def discover_and_verify_sources(
                 )
             )
             continue
-        retrieval = enrichment_provider.retrieve_source(candidate.url, catalogue_row.Mfg_Part_Num)
+        retrieval = verification_provider.retrieve_source(
+            candidate.url, catalogue_row.Mfg_Part_Num
+        )
         if retrieval.success and retrieval.source is not None:
             verified_sources.append(retrieval.source)
             diagnostics.append(_diagnostic(candidate, "verified", None))

@@ -21,11 +21,18 @@ from .delivery_schema import DeliverySchema
 from .manufacturer_enrichment import ManufacturerEnrichmentProvider
 from .reference_data import AttributeReference, BrandReference, ManufacturerReference, UOMReference
 from .review import ReviewIssue, ReviewReport
+from .source_discovery import (
+    ManufacturerSourcePolicy,
+    SerperSearchProvider,
+    SourceSearchProvider,
+    discover_and_verify_sources,
+)
 
 
 SourceURLResolver = Callable[[CatalogInputRow], Sequence[str]]
 ExpectedRowResolver = Callable[[CatalogInputRow], Mapping[str, str] | None]
 RowEnricher = Callable[..., CatalogueEnrichmentResult]
+DiscoveryPolicyResolver = Callable[[CatalogInputRow], ManufacturerSourcePolicy | None]
 
 
 class BatchReviewIssue(BaseModel):
@@ -73,13 +80,18 @@ def run_catalogue_batch(
     uom_reference: UOMReference | None = None,
     attribute_mappings: AttributeDeliveryMappings | None = None,
     row_enricher: RowEnricher | None = None,
+    discovery_enabled: bool = False,
+    search_provider: SourceSearchProvider | None = None,
+    discovery_policy_resolver: DiscoveryPolicyResolver | None = None,
+    discovery_max_results_per_query: int = 10,
 ) -> BatchResult:
     """Process catalogue rows in input order using the existing row workflow.
 
     ``source_urls`` may be a mapping keyed by MPN or a resolver receiving the
-    complete raw row. An absent configuration supplies no URLs; the existing
-    row function then produces a failed row outcome rather than allowing the
-    batch to drop it.
+    complete raw row. When ``discovery_enabled`` is true, rows without explicit
+    URLs use the governed pilot policy registry and configured search provider.
+    Search output is never passed to enrichment; only retrieved,
+    exact-MPN-verified sources are passed onward.
     """
     rows = load_catalog_rows(rows_or_csv) if isinstance(rows_or_csv, (str, Path)) else list(rows_or_csv)
     enrich = row_enricher or enrich_catalogue_row
@@ -92,19 +104,43 @@ def run_catalogue_batch(
         try:
             urls = _resolve_source_urls(source_urls, row)
             expected = _resolve_expected_row(expected_delivery_rows, row)
-            result = enrich(
-                row,
-                urls,
-                delivery_schema,
-                client=client,
-                provider=provider,
-                manufacturer_reference=manufacturer_reference,
-                brand_reference=brand_reference,
-                attribute_reference=attribute_reference,
-                uom_reference=uom_reference,
-                attribute_mappings=attribute_mappings,
-                expected_delivery_row=dict(expected) if expected is not None else None,
-            )
+            if discovery_enabled and not urls:
+                discovery = _discover_for_row(
+                    row,
+                    search_provider=search_provider,
+                    enrichment_provider=provider,
+                    policy_resolver=discovery_policy_resolver,
+                    max_results_per_query=discovery_max_results_per_query,
+                )
+                result = enrich(
+                    row,
+                    [],
+                    delivery_schema,
+                    client=client,
+                    provider=provider,
+                    manufacturer_reference=manufacturer_reference,
+                    brand_reference=brand_reference,
+                    attribute_reference=attribute_reference,
+                    uom_reference=uom_reference,
+                    attribute_mappings=attribute_mappings,
+                    expected_delivery_row=dict(expected) if expected is not None else None,
+                    verified_sources=discovery.verified_sources,
+                    initial_source_diagnostics=discovery.diagnostics,
+                )
+            else:
+                result = enrich(
+                    row,
+                    urls,
+                    delivery_schema,
+                    client=client,
+                    provider=provider,
+                    manufacturer_reference=manufacturer_reference,
+                    brand_reference=brand_reference,
+                    attribute_reference=attribute_reference,
+                    uom_reference=uom_reference,
+                    attribute_mappings=attribute_mappings,
+                    expected_delivery_row=dict(expected) if expected is not None else None,
+                )
         except (CatalogueEnrichmentError, RuntimeError, ValueError, OSError) as error:
             result = _failed_result(row, delivery_schema, error)
 
@@ -138,6 +174,84 @@ def run_catalogue_batch(
         evaluation_diagnostics=evaluation_diagnostics,
         row_results=row_results,
     )
+
+
+class _DiscoveryOutcome:
+    def __init__(
+        self,
+        verified_sources: Sequence[Any] = (),
+        diagnostics: Sequence[EnrichmentSourceDiagnostic] = (),
+    ) -> None:
+        self.verified_sources = list(verified_sources)
+        self.diagnostics = list(diagnostics)
+
+
+def _discover_for_row(
+    row: CatalogInputRow,
+    *,
+    search_provider: SourceSearchProvider | None,
+    enrichment_provider: ManufacturerEnrichmentProvider | None,
+    policy_resolver: DiscoveryPolicyResolver | None,
+    max_results_per_query: int,
+) -> _DiscoveryOutcome:
+    """Run one governed discovery step and convert diagnostics for enrichment."""
+    from .pilot_policies import get_pilot_source_policy
+
+    policy = (policy_resolver or get_pilot_source_policy)(row)
+    if policy is None:
+        return _DiscoveryOutcome(
+            diagnostics=[
+                EnrichmentSourceDiagnostic(
+                    url="",
+                    success=False,
+                    error="No explicit manufacturer source policy was configured for this row.",
+                )
+            ]
+        )
+
+    provider = enrichment_provider or ManufacturerEnrichmentProvider()
+    search = search_provider or SerperSearchProvider.from_environment()
+    try:
+        verification = discover_and_verify_sources(
+            row,
+            policy,
+            search,
+            provider,
+            max_results_per_query=max_results_per_query,
+        )
+    except Exception as error:
+        return _DiscoveryOutcome(
+            diagnostics=[
+                EnrichmentSourceDiagnostic(
+                    url="",
+                    success=False,
+                    error=f"Source discovery failed: {error}",
+                )
+            ]
+        )
+
+    diagnostics = [
+        EnrichmentSourceDiagnostic(
+            url=item.url,
+            success=False,
+            error=item.error
+            or (
+                "Search candidate was rejected by the approved manufacturer-domain policy."
+                if item.verification_status == "rejected"
+                else "Discovered source failed exact-MPN verification."
+            ),
+        )
+        for item in verification.diagnostics
+        if item.verification_status != "verified"
+    ]
+    if not verification.verified_sources and not diagnostics:
+        reason = (
+            "No verified manufacturer source was found."
+            if verification.discovery.status != "failed"
+            else "Source discovery failed without a verified manufacturer source."
+        )
+        diagnostics.append(EnrichmentSourceDiagnostic(url="", success=False, error=reason))
+    return _DiscoveryOutcome(verification.verified_sources, diagnostics)
 
 
 def _resolve_source_urls(

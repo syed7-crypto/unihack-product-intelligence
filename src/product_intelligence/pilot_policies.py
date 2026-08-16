@@ -24,12 +24,27 @@ _LEVITON = ManufacturerSourcePolicy(
     manufacturer_name="Leviton",
     approved_domains=("leviton.com", "content.leviton.com"),
 )
+_KITCHENAID = ManufacturerSourcePolicy(
+    manufacturer_name="KitchenAid",
+    approved_domains=("kitchenaid.com", "www.kitchenaid.com"),
+)
+_DEWALT = ManufacturerSourcePolicy(
+    manufacturer_name="DEWALT",
+    approved_domains=("dewalt.com", "www.dewalt.com"),
+)
+_TREX = ManufacturerSourcePolicy(
+    manufacturer_name="Trex",
+    approved_domains=("trex.com", "www.trex.com"),
+)
 
 
 _PILOT_POLICIES: dict[str, ManufacturerSourcePolicy] = {
     "PDSH4816AF": _FRIGIDAIRE,
     "59210": _HUNTER,
     "S03-05226-IS": _LEVITON,
+    "KDFM404KPS": _KITCHENAID,
+    "DWST41092": _DEWALT,
+    "543302126": _TREX,
 }
 
 

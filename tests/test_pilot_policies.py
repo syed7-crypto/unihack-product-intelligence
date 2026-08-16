@@ -9,6 +9,7 @@ from src.product_intelligence.pilot_policies import get_pilot_source_policy
 from src.product_intelligence.source_discovery import (
     InMemorySourceSearchProvider,
     ManufacturerSourcePolicy,
+    SearchResult,
     discover_and_verify_sources,
     run_discovery_pilot,
 )
@@ -35,10 +36,22 @@ class PilotPolicyTests(unittest.TestCase):
         self.assertEqual(hunter.manufacturer_name, "Hunter")
         self.assertEqual(leviton.manufacturer_name, "Leviton")
 
-    def test_remaining_selected_products_have_no_policy(self) -> None:
-        for mpn in ("KDFM404KPS", "DWST41092", "543302126"):
+    def test_expanded_products_receive_expected_pilot_policies(self) -> None:
+        expected = {
+            "KDFM404KPS": ("KitchenAid", ("kitchenaid.com", "www.kitchenaid.com")),
+            "DWST41092": ("DEWALT", ("dewalt.com", "www.dewalt.com")),
+            "543302126": ("Trex", ("trex.com", "www.trex.com")),
+        }
+        for mpn, (manufacturer, domains) in expected.items():
             with self.subTest(mpn=mpn):
-                self.assertIsNone(get_pilot_source_policy(mpn))
+                policy = get_pilot_source_policy(mpn)
+                self.assertIsNotNone(policy)
+                assert policy is not None
+                self.assertEqual(policy.manufacturer_name, manufacturer)
+                self.assertEqual(policy.approved_domains, domains)
+
+    def test_unknown_product_still_has_no_implicit_policy(self) -> None:
+        self.assertIsNone(get_pilot_source_policy("not-a-pilot-product"))
 
     def test_domains_are_exact_and_contain_no_retailers(self) -> None:
         self.assertEqual(
@@ -53,11 +66,26 @@ class PilotPolicyTests(unittest.TestCase):
             get_pilot_source_policy("S03-05226-IS").approved_domains,
             ("leviton.com", "content.leviton.com"),
         )
+        self.assertEqual(
+            get_pilot_source_policy("KDFM404KPS").approved_domains,
+            ("kitchenaid.com", "www.kitchenaid.com"),
+        )
+        self.assertEqual(
+            get_pilot_source_policy("DWST41092").approved_domains,
+            ("dewalt.com", "www.dewalt.com"),
+        )
+        self.assertEqual(
+            get_pilot_source_policy("543302126").approved_domains,
+            ("trex.com", "www.trex.com"),
+        )
         serialized = str(
             [
                 get_pilot_source_policy("PDSH4816AF"),
                 get_pilot_source_policy("59210"),
                 get_pilot_source_policy("S03-05226-IS"),
+                get_pilot_source_policy("KDFM404KPS"),
+                get_pilot_source_policy("DWST41092"),
+                get_pilot_source_policy("543302126"),
             ]
         ).casefold()
         self.assertNotIn("amazon", serialized)
@@ -150,6 +178,51 @@ class PilotPolicyTests(unittest.TestCase):
         result = discover_and_verify_sources(row("59210"), policy, search, provider)
 
         self.assertEqual(result.verified_sources, [])
+
+    def test_run_discovery_pilot_passes_selected_policy_domains_to_verifier(self) -> None:
+        official_url = "https://hunterfan.com/59210"
+        retailer_url = "https://example-retailer.com/59210"
+        search_results = [
+            SearchResult(url=official_url, title="Hunter 59210", snippet="59210"),
+            SearchResult(url=retailer_url, title="59210", snippet="59210"),
+        ]
+        search = InMemorySourceSearchProvider(
+            {
+                "59210": search_results,
+                "59210 Hunter": search_results,
+            }
+        )
+        retrieved_urls: list[str] = []
+
+        def fetcher(url: str, timeout: float) -> RetrievedPayload:
+            retrieved_urls.append(url)
+            return RetrievedPayload(
+                200,
+                {"content-type": "text/html"},
+                b"<h1>Hunter model 59210</h1>",
+            )
+
+        # Deliberately start with the provider's default Frigidaire allowlist.
+        # The selected Hunter policy must be scoped into verification.
+        provider = ManufacturerEnrichmentProvider(fetcher=fetcher)
+        reports = run_discovery_pilot(
+            [row("59210")],
+            search_provider=search,
+            enrichment_provider=provider,
+        )
+
+        verification = reports[0].verification
+        self.assertIsNotNone(verification)
+        assert verification is not None
+        self.assertEqual([source.url for source in verification.verified_sources], [official_url])
+        self.assertEqual(retrieved_urls, [official_url])
+        self.assertTrue(
+            any(
+                diagnostic.url == retailer_url
+                and diagnostic.verification_status == "rejected"
+                for diagnostic in verification.diagnostics
+            )
+        )
 
 
 if __name__ == "__main__":
