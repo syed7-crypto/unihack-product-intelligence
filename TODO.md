@@ -15,12 +15,13 @@ Completed MVP work is recorded so the backlog does not present implemented featu
 - [DONE] Controlled reference-resolution interfaces
 - [DONE] Controlled manufacturer retrieval and exact MPN verification
 - [DONE] Generic single-row catalogue enrichment
+- [DONE] Row-isolated catalogue batch orchestration with deterministic summaries
 - [DONE] Unified review/exception layer and delivery gating
 
 ## Current/next priority
 
-- [TODO] Design safe full-1000-row batch orchestration.
-- [TODO] Add resumability, per-row error isolation, aggregate reporting, and performance tests.
+- [TODO] Configure authoritative sources for the remaining catalogue rows.
+- [TODO] Add resumability and performance tests before large-scale execution.
 
 ## Reference data
 

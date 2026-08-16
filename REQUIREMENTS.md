@@ -20,6 +20,7 @@
 - Exact 252-column delivery output.
 - Evaluation-only comparison with known-good rows.
 - Typed review issues and delivery gating.
+- Row-isolated batch orchestration with ordered outcomes and deterministic summaries.
 
 ## Safety requirements
 
@@ -27,7 +28,8 @@ Unsupported AI-generated values must not enter accepted extraction or delivery. 
 
 ## Not implemented
 
-- Full 1000-row batch execution and catalogue-scale orchestration.
+- Automatic enrichment of all 1000 rows without supplied source configuration.
+- Bulk-scale performance, resumability, and operational orchestration.
 - Unrestricted automatic source discovery.
 - Authoritative manufacturer cross-reference service.
 - Official UniHack manufacturer, brand, taxonomy, attribute/LOV, or UOM master ingestion.

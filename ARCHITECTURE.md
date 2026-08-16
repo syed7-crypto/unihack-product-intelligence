@@ -52,7 +52,7 @@ ReviewReport delivery gate
 Optional evaluation-only comparison
 ```
 
-The current catalogue implementation is a generic single-row vertical slice; it does not process all 1000 rows in bulk.
+The current catalogue implementation has generic single-row enrichment plus deterministic row-isolated batch orchestration. Batch processing preserves input order, records every row outcome, and requires externally supplied source configuration; it does not perform automatic discovery for all 1000 rows.
 
 ## Components
 
@@ -67,6 +67,7 @@ The current catalogue implementation is a generic single-row vertical slice; it 
 - `reference_data.py`: deterministic reference interfaces; fixtures are mock/test data.
 - `catalog_input.py`, `delivery_schema.py`, `delivery_output.py`: catalogue and exact 252-column handling.
 - `catalogue_enrichment.py`: generic row orchestration and evaluation comparison.
+- `catalogue_batch.py`: ordered batch orchestration, failure isolation, safe delivery aggregation, and summary counts.
 - `review.py`: typed review issues, statuses, and delivery gating.
 - `ui.py` and `app.py`: document-oriented Streamlit MVP.
 

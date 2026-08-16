@@ -90,6 +90,12 @@ from .review import (
     ReviewReport,
     build_review_report,
 )
+from .catalogue_batch import (
+    BatchEvaluationDiagnostic,
+    BatchResult,
+    BatchReviewIssue,
+    run_catalogue_batch,
+)
 
 __all__ = [
     "AttributeEvidence",
@@ -158,4 +164,8 @@ __all__ = [
     "ReviewIssue",
     "ReviewReport",
     "build_review_report",
+    "BatchEvaluationDiagnostic",
+    "BatchResult",
+    "BatchReviewIssue",
+    "run_catalogue_batch",
 ]

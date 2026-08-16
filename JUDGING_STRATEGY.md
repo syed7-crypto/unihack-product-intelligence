@@ -21,7 +21,7 @@ The strongest demo points are:
 
 Python verifies source metadata, quotes, values, locations, units, references, conflicts, and delivery eligibility. Expected-output comparison remains separate from product evidence.
 
-The architecture has been stress-tested across different categories, but the current catalogue implementation is a single-row vertical slice. It does not claim 1000-row batch processing.
+The architecture has been stress-tested across different categories and now includes generic row-isolated batch orchestration. It preserves every row outcome and requires externally supplied source configuration; it does not claim automatic enrichment or source discovery for all 1000 rows.
 
 The reusable boundaries support future batch orchestration, official reference ingestion, and broader source providers without weakening the evidence boundary.
 
