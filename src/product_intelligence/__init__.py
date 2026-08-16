@@ -67,6 +67,13 @@ from .reference_data import (
     normalize_reference_value,
     resolve_catalog_row_references,
 )
+from .manufacturer_enrichment import (
+    DEFAULT_APPROVED_DOMAINS,
+    ManufacturerEnrichmentProvider,
+    ManufacturerSource,
+    RetrievedPayload,
+    RetrievalResult,
+)
 
 __all__ = [
     "AttributeEvidence",
@@ -118,4 +125,9 @@ __all__ = [
     "UOMReference",
     "normalize_reference_value",
     "resolve_catalog_row_references",
+    "DEFAULT_APPROVED_DOMAINS",
+    "ManufacturerEnrichmentProvider",
+    "ManufacturerSource",
+    "RetrievedPayload",
+    "RetrievalResult",
 ]

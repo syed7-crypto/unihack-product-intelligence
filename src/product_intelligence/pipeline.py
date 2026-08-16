@@ -54,7 +54,7 @@ class ProductIntelligencePipelineError(RuntimeError):
 
 
 def run_pipeline(
-    source_files: Sequence[str | Path],
+    source_files: Sequence[str | Path | NormalizedSource],
     client: StructuredGeminiClient | None = None,
 ) -> ProductIntelligenceResult:
     """Run extraction, AI stages, validation, and scoring for source files.
@@ -108,9 +108,12 @@ def run_pipeline(
     )
 
 
-def _extract_sources(source_files: Sequence[str | Path]) -> list[NormalizedSource]:
+def _extract_sources(source_files: Sequence[str | Path | NormalizedSource]) -> list[NormalizedSource]:
     sources: list[NormalizedSource] = []
     for source_file in source_files:
+        if isinstance(source_file, NormalizedSource):
+            sources.append(source_file)
+            continue
         try:
             sources.append(extract_file(source_file))
         except ExtractionError as error:
