@@ -25,7 +25,7 @@ The catalogue workflow reuses the document/evidence pipeline; it does not create
 
 ## Safety and review
 
-Gemini must use only supplied source text. Found values require matching source metadata, a quote present in source text, the value present in that quote, and valid location data. Conflicts remain visible. Validation, unit comparison, confidence, reference approval, and delivery gating are deterministic Python logic.
+Gemini must use only supplied source text. Found values require matching source metadata, a quote present in source text, the value present in that quote, and valid location data. Invalid individual attribute proposals are removed from accepted extraction and surfaced as attribute-scoped review issues; independently valid attributes continue. Conflicts remain visible. Validation, unit comparison, confidence, reference approval, and delivery gating are deterministic Python logic.
 
 `ReviewReport` uses `ready`, `needs_review`, `blocked`, and `failed`. Review diagnostics never repair values, select conflict winners, or approve unsupported data. Blocked/review attributes are not mapped, while raw catalogue fields remain preserved.
 

@@ -170,6 +170,31 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(temperature.status, "not_found")
         self.assertEqual(temperature_confidence.score, 0.0)
 
+    def test_invalid_attribute_is_reviewed_while_valid_attribute_reaches_validation(self) -> None:
+        txt = extract_file(SAMPLES / "industrial_valve.txt")
+        response = extraction_response(txt)
+        response["attributes"][0] = found(
+            "pressure_rating",
+            "200 PSI",
+            txt,
+            "Pressure rating: 150 PSI",
+        )
+        response["attributes"][1] = found(
+            "material",
+            "Stainless steel",
+            txt,
+            "Body material: Stainless steel",
+        )
+        client = SequentialGeminiClient([IDENTIFICATION_RESPONSE, response])
+
+        result = run_pipeline([SAMPLES / "industrial_valve.txt"], client)
+
+        pressure = next(item for item in result.validation.attributes if item.name == "pressure_rating")
+        material = next(item for item in result.validation.attributes if item.name == "material")
+        self.assertEqual(pressure.status, "not_found")
+        self.assertEqual(material.status, "single_source")
+        self.assertEqual(result.extracted_attributes[0].rejected_attributes[0].name, "pressure_rating")
+
     def test_conflicting_values_are_preserved_end_to_end(self) -> None:
         txt = extract_file(SAMPLES / "industrial_valve.txt")
         with tempfile.TemporaryDirectory() as directory:

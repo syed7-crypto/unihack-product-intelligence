@@ -328,6 +328,21 @@ class RuntimePolicyTests(unittest.TestCase):
         self.assertEqual(result.ready_rows, 1)
         self.assertEqual([source.url for source in captured], [url])
 
+    def test_product_first_accepts_compact_brand_format_from_page_text(self) -> None:
+        url = "https://milwaukeetool.example/product/RUNTIME-1"
+        result = resolve_identity_and_source_policy(
+            row(),
+            search_provider=InMemorySourceSearchProvider({
+                'site:milwaukeetool.example "RUNTIME-1"': [SearchResult(url=url)]
+            }),
+            enrichment_provider=self.provider([], b"<h1>Milwaukee Tool RUNTIME-1</h1>"),
+            candidate_domain_provider=lambda _row: [RuntimeDomainCandidate(
+                domain="milwaukeetool.example", identity_hint="milwaukeetool"
+            )],
+        )
+        self.assertEqual(result.state, "resolvable")
+        self.assertEqual(result.resolved_identity, "milwaukeetool")
+
 
 if __name__ == "__main__":
     unittest.main()

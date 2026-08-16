@@ -133,6 +133,19 @@ def build_review_report(
         )
 
     if pipeline_result is not None:
+        for extraction in pipeline_result.extracted_attributes:
+            for rejected in extraction.rejected_attributes:
+                add(
+                    ReviewIssue(
+                        code=rejected.code,
+                        severity="blocking",
+                        scope="attribute",
+                        message=rejected.message,
+                        attribute_name=rejected.name,
+                        current_value=rejected.proposed_value,
+                        affects_delivery=True,
+                    )
+                )
         mapped_names = {
             str(getattr(item, "attribute_name"))
             for item in mapping_diagnostics

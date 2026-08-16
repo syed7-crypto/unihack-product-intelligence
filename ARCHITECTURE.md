@@ -26,7 +26,7 @@ ProductIntelligenceResult
 Streamlit display / JSON export
 ```
 
-Gemini is used for product identification/schema generation and source-backed value extraction. Python validates responses, preserves evidence, detects conflicts, normalizes supported units, and calculates confidence.
+Gemini is used for product identification/schema generation and source-backed value extraction. Python validates responses, preserves evidence, detects conflicts, normalizes supported units, and calculates confidence. A malformed response remains fatal, but an individual found value that fails deterministic evidence checks is removed from accepted attributes and recorded for attribute-level review; valid sibling attributes are retained.
 
 ## Catalogue enrichment vertical slice
 

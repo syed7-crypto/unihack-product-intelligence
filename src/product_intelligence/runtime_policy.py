@@ -324,7 +324,11 @@ def _deterministic_site_identity(
     if not hint:
         return None
     text = normalize_reference_value(extracted_text)
-    if hint not in text:
+    # Require the proposed identity to occur in the retrieved page itself.
+    # Compact comparison only removes presentation separators, allowing
+    # legitimate forms such as ``Milwaukee Tool``/``milwaukeetool`` while
+    # retaining deterministic exact matching. Search metadata is never used.
+    if hint not in text and _compact_identity(hint) not in _compact_identity(text):
         return None
     return RuntimeAuthorityEvidence(
         controlled_identity=candidate.identity_hint.strip(),
@@ -332,3 +336,8 @@ def _deterministic_site_identity(
         domain=source.manufacturer_domain,
         reason="The retrieved exact-MPN page contains the proposed identity in its site text.",
     )
+
+
+def _compact_identity(value: str) -> str:
+    """Remove presentation separators for deterministic identity comparison."""
+    return "".join(character for character in value if character.isalnum())

@@ -5,6 +5,7 @@ from src.product_intelligence.attribute_extraction import (
     AttributeEvidence,
     AttributeExtractionResult,
     ExtractedAttribute,
+    RejectedAttribute,
 )
 from src.product_intelligence.catalogue_enrichment import (
     EvaluationComparison,
@@ -270,7 +271,29 @@ class ReviewLayerTests(unittest.TestCase):
         )
 
         self.assertEqual(report.status, "ready")
-        self.assertEqual(report.issues, [])
+
+    def test_rejected_attribute_is_reviewed_without_becoming_a_delivery_value(self) -> None:
+        result = pipeline_result()
+        result.extracted_attributes[0].rejected_attributes = [
+            RejectedAttribute(
+                name="arbor_type",
+                code="EVIDENCE_VALUE_NOT_IN_QUOTE",
+                message="The value is not supported by its evidence quote.",
+                proposed_value="Arbor type guessed by Gemini",
+            )
+        ]
+        report = build_review_report(
+            pipeline_result=result,
+            source_diagnostics=[source_diagnostic(success=True)],
+            reference_resolution=None,
+            mapping_diagnostics=[],
+            evaluation_comparison=None,
+        )
+
+        issue = next(issue for issue in report.issues if issue.code == "EVIDENCE_VALUE_NOT_IN_QUOTE")
+        self.assertEqual(issue.scope, "attribute")
+        self.assertEqual(report.status, "needs_review")
+        self.assertEqual(result.validation.attributes[0].name, "pressure_rating")
 
     def test_evaluation_differences_are_non_delivery_issues(self) -> None:
         comparison = EvaluationComparison(
@@ -311,4 +334,3 @@ class ReviewLayerTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

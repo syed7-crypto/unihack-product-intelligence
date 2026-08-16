@@ -5,6 +5,7 @@ from .attribute_extraction import (
     AttributeExtractionError,
     AttributeExtractionResult,
     ExtractedAttribute,
+    RejectedAttribute,
     extract_attribute_values,
 )
 from .cross_source_validation import (
@@ -134,6 +135,7 @@ __all__ = [
     "AttributeExtractionError",
     "AttributeExtractionResult",
     "ExtractedAttribute",
+    "RejectedAttribute",
     "extract_attribute_values",
     "ConflictInfo",
     "CrossSourceValidationError",
