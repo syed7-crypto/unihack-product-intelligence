@@ -30,7 +30,9 @@ from .source_discovery import (
 from .pilot_policies import resolve_source_policy_for_row
 from .runtime_policy import (
     IdentityResolutionResult,
+    RuntimeDomainCandidateProvider,
     RuntimeAuthorityVerifier,
+    RuntimeSiteIdentityVerifier,
     resolve_identity_and_source_policy,
 )
 
@@ -92,6 +94,10 @@ def run_catalogue_batch(
     discovery_max_results_per_query: int = 10,
     runtime_policy_resolution_enabled: bool = False,
     runtime_authority_verifier: RuntimeAuthorityVerifier | None = None,
+    runtime_candidate_domain_provider: RuntimeDomainCandidateProvider | None = None,
+    runtime_site_identity_verifier: RuntimeSiteIdentityVerifier | None = None,
+    runtime_max_candidate_domains: int = 3,
+    runtime_max_domain_searches: int = 3,
 ) -> BatchResult:
     """Process catalogue rows in input order using the existing row workflow.
 
@@ -123,6 +129,10 @@ def run_catalogue_batch(
                     max_results_per_query=discovery_max_results_per_query,
                     runtime_policy_resolution_enabled=runtime_policy_resolution_enabled,
                     runtime_authority_verifier=runtime_authority_verifier,
+                    runtime_candidate_domain_provider=runtime_candidate_domain_provider,
+                    runtime_site_identity_verifier=runtime_site_identity_verifier,
+                    runtime_max_candidate_domains=runtime_max_candidate_domains,
+                    runtime_max_domain_searches=runtime_max_domain_searches,
                 )
                 result = enrich(
                     row,
@@ -209,6 +219,10 @@ def _discover_for_row(
     max_results_per_query: int,
     runtime_policy_resolution_enabled: bool,
     runtime_authority_verifier: RuntimeAuthorityVerifier | None,
+    runtime_candidate_domain_provider: RuntimeDomainCandidateProvider | None,
+    runtime_site_identity_verifier: RuntimeSiteIdentityVerifier | None,
+    runtime_max_candidate_domains: int,
+    runtime_max_domain_searches: int,
 ) -> _DiscoveryOutcome:
     """Run one governed discovery step and convert diagnostics for enrichment."""
     policy = (
@@ -230,6 +244,10 @@ def _discover_for_row(
                 brand_reference=brand_reference,
                 authority_verifier=runtime_authority_verifier,
                 max_results=max_results_per_query,
+                candidate_domain_provider=runtime_candidate_domain_provider,
+                site_identity_verifier=runtime_site_identity_verifier,
+                max_candidate_domains=runtime_max_candidate_domains,
+                max_domain_searches=runtime_max_domain_searches,
             )
             return _runtime_outcome(runtime)
         return _DiscoveryOutcome(

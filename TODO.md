@@ -19,6 +19,7 @@ Completed MVP work is recorded so the backlog does not present implemented featu
 - [DONE] Concrete Serper web-search provider with fail-closed configuration
 - [DONE] Controlled manufacturer/brand governance-policy registry with approved domains
 - [DONE] Ephemeral three-state runtime identity/source-policy resolution
+- [DONE] Product-first runtime domain resolution with domain-constrained search and site-identity verification
 - [DONE] Generic single-row catalogue enrichment
 - [DONE] Row-isolated catalogue batch orchestration with deterministic summaries
 - [DONE] Unified review/exception layer and delivery gating
@@ -39,7 +40,7 @@ Completed MVP work is recorded so the backlog does not present implemented featu
 - [DONE] Define governed discovery with explicit allowlists.
 - [TODO] Add an authoritative manufacturer cross-reference provider.
 - [TODO] Expand approved manufacturer domains through tested configuration.
-- [TODO] Add production-grade independent authority verification for runtime policy candidates.
+- [TODO] Harden production site-identity verification and expand approved runtime-source governance.
 - [TODO] Add a small, explicitly selected real-search pilot configuration for manually verified manufacturers.
 - [TODO] Run the six-row real Serper pilot using the pilot registry.
 - [TODO] Preserve exact MPN verification and the evidence firewall.

@@ -124,6 +124,7 @@ from .pilot_policies import (
 )
 from .runtime_policy import (
     IdentityResolutionResult,
+    RuntimeDomainCandidate,
     RuntimeAuthorityEvidence,
     resolve_identity_and_source_policy,
 )
@@ -222,6 +223,7 @@ __all__ = [
     "resolve_source_policy",
     "resolve_source_policy_for_row",
     "IdentityResolutionResult",
+    "RuntimeDomainCandidate",
     "RuntimeAuthorityEvidence",
     "resolve_identity_and_source_policy",
 ]

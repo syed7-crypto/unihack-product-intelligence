@@ -30,7 +30,9 @@ The passing-test count is intentionally reported by each test run rather than ma
 - controlled reference resolution and no silent fallback
 - catalogue enrichment, evaluation comparison, review issues, and delivery gating
 - batch ordering, duplicate-row handling, failure isolation, review/evaluation aggregation, and safe delivery rows
-- controlled identity policy resolution, ephemeral runtime policies, authority-verifier gating, and unknown-row review
+- controlled identity policy resolution, ephemeral runtime policies, product-first candidate-domain discovery,
+  domain-constrained searches, actual-page site-identity verification, retailer rejection, exact-MPN gating, and
+  unknown-row review
 
 Tests use local controlled product, catalogue, delivery, and mock-reference fixtures. The expected delivery CSV is used for structure/evaluation only, never as product evidence.
 
@@ -38,6 +40,6 @@ Tests use local controlled product, catalogue, delivery, and mock-reference fixt
 
 Future work includes scale tests for bulk processing, official reference-data integration tests, and additional approved manufacturer domains.
 
-The real Brave and Serper providers are not called by the normal suite. Runtime policy tests inject deterministic search,
-authority, and retrieval fixtures. A real pilot requires the selected provider's API key and an explicitly selected row
-list; it must not be run against all 1,000 rows as part of ordinary testing.
+The real Brave and Serper providers are not called by the normal suite. Runtime policy tests inject deterministic
+search, candidate-domain, site-identity, and retrieval fixtures. A real pilot requires the selected provider's API key
+and an explicitly selected row list; it must not be run against all 1,000 rows as part of ordinary testing.

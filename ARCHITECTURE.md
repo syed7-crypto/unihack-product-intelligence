@@ -83,9 +83,28 @@ Policies are governance configuration, not product-specific application logic. T
 manufacturer/brand identity, approved HTTPS domains, and governance metadata. They contain no attributes, delivery
 values, or expected-output values. Raw manufacturer/brand text and search results never create trusted policies.
 
-Runtime resolution is explicitly three-state: `KNOWN` uses the controlled policy registry; `RESOLVABLE` requires
-independent deterministic authority evidence, approved HTTPS-domain checks, and exact-MPN retrieval before creating an
-ephemeral in-memory policy; `UNKNOWN` becomes `NEEDS_REVIEW`. Runtime policies are never persisted automatically.
+Runtime resolution is explicitly three-state: `KNOWN` uses the controlled policy registry; `RESOLVABLE` follows a
+product-first flow:
+
+```text
+Untrusted candidate-domain discovery
+        ↓
+Domain-constrained exact-MPN search
+        ↓
+Retrieve actual HTTPS candidate page
+        ↓
+Verify exact MPN/product existence and site identity from page content
+        ↓
+Create ephemeral in-memory policy for the verified domain
+        ↓
+Existing enrichment/evidence firewall
+```
+
+Search titles, snippets, ranking, and retailer pages are never evidence and never create trusted policy. Candidate
+domains must be HTTPS and non-retailer, and the retrieved source must pass the existing exact-MPN verification gate.
+`UNKNOWN` becomes `NEEDS_REVIEW`. Runtime policies are never persisted automatically. An injected deterministic
+authority or site-identity verifier remains available as a test/compatibility seam; it does not relax the retrieval or
+exact-MPN requirements.
 
 ## Safety boundaries
 
