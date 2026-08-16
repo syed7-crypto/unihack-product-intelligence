@@ -21,6 +21,7 @@ There are 100 passing tests at this checkpoint; the count may change as the proj
 - deterministic confidence scoring and score boundaries
 - end-to-end pipeline orchestration
 - controlled manufacturer retrieval, allowlists, exact MPN verification, and web/PDF normalization
+- governed source discovery, policy filtering, candidate deduplication, and discovery-to-verification boundaries
 - catalogue CSV input and six-field preservation
 - exact 252-column delivery schema and comparison
 - controlled reference resolution and no silent fallback

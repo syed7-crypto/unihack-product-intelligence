@@ -96,6 +96,19 @@ from .catalogue_batch import (
     BatchReviewIssue,
     run_catalogue_batch,
 )
+from .source_discovery import (
+    DiscoveredSourceCandidate,
+    DiscoveredSourceVerificationResult,
+    InMemorySourceSearchProvider,
+    ManufacturerSourcePolicy,
+    SearchResult,
+    SourceDiscoveryResult,
+    SourceSearchProvider,
+    SourceVerificationDiagnostic,
+    discover_and_verify_sources,
+    discover_manufacturer_sources,
+    generate_discovery_queries,
+)
 
 __all__ = [
     "AttributeEvidence",
@@ -168,4 +181,15 @@ __all__ = [
     "BatchResult",
     "BatchReviewIssue",
     "run_catalogue_batch",
+    "DiscoveredSourceCandidate",
+    "DiscoveredSourceVerificationResult",
+    "InMemorySourceSearchProvider",
+    "ManufacturerSourcePolicy",
+    "SearchResult",
+    "SourceDiscoveryResult",
+    "SourceSearchProvider",
+    "SourceVerificationDiagnostic",
+    "discover_and_verify_sources",
+    "discover_manufacturer_sources",
+    "generate_discovery_queries",
 ]

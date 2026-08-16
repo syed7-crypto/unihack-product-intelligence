@@ -14,6 +14,7 @@ Completed MVP work is recorded so the backlog does not present implemented featu
 - [DONE] Exact 252-column delivery schema and comparison
 - [DONE] Controlled reference-resolution interfaces
 - [DONE] Controlled manufacturer retrieval and exact MPN verification
+- [DONE] Governed manufacturer-source candidate discovery and verification boundary
 - [DONE] Generic single-row catalogue enrichment
 - [DONE] Row-isolated catalogue batch orchestration with deterministic summaries
 - [DONE] Unified review/exception layer and delivery gating
@@ -31,7 +32,7 @@ Completed MVP work is recorded so the backlog does not present implemented featu
 
 ## Source discovery and enrichment
 
-- [TODO] Define governed discovery with explicit allowlists.
+- [DONE] Define governed discovery with explicit allowlists.
 - [TODO] Add an authoritative manufacturer cross-reference provider.
 - [TODO] Expand approved manufacturer domains through tested configuration.
 - [TODO] Preserve exact MPN verification and the evidence firewall.
