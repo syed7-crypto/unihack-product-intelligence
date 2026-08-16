@@ -122,6 +122,11 @@ from .pilot_policies import (
     resolve_source_policy,
     resolve_source_policy_for_row,
 )
+from .runtime_policy import (
+    IdentityResolutionResult,
+    RuntimeAuthorityEvidence,
+    resolve_identity_and_source_policy,
+)
 
 __all__ = [
     "AttributeEvidence",
@@ -216,4 +221,7 @@ __all__ = [
     "get_controlled_source_policy",
     "resolve_source_policy",
     "resolve_source_policy_for_row",
+    "IdentityResolutionResult",
+    "RuntimeAuthorityEvidence",
+    "resolve_identity_and_source_policy",
 ]

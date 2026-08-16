@@ -28,6 +28,11 @@ from .source_discovery import (
     discover_and_verify_sources,
 )
 from .pilot_policies import resolve_source_policy_for_row
+from .runtime_policy import (
+    IdentityResolutionResult,
+    RuntimeAuthorityVerifier,
+    resolve_identity_and_source_policy,
+)
 
 
 SourceURLResolver = Callable[[CatalogInputRow], Sequence[str]]
@@ -85,6 +90,8 @@ def run_catalogue_batch(
     search_provider: SourceSearchProvider | None = None,
     discovery_policy_resolver: DiscoveryPolicyResolver | None = None,
     discovery_max_results_per_query: int = 10,
+    runtime_policy_resolution_enabled: bool = False,
+    runtime_authority_verifier: RuntimeAuthorityVerifier | None = None,
 ) -> BatchResult:
     """Process catalogue rows in input order using the existing row workflow.
 
@@ -114,6 +121,8 @@ def run_catalogue_batch(
                     manufacturer_reference=manufacturer_reference,
                     brand_reference=brand_reference,
                     max_results_per_query=discovery_max_results_per_query,
+                    runtime_policy_resolution_enabled=runtime_policy_resolution_enabled,
+                    runtime_authority_verifier=runtime_authority_verifier,
                 )
                 result = enrich(
                     row,
@@ -198,6 +207,8 @@ def _discover_for_row(
     manufacturer_reference: ManufacturerReference | None,
     brand_reference: BrandReference | None,
     max_results_per_query: int,
+    runtime_policy_resolution_enabled: bool,
+    runtime_authority_verifier: RuntimeAuthorityVerifier | None,
 ) -> _DiscoveryOutcome:
     """Run one governed discovery step and convert diagnostics for enrichment."""
     policy = (
@@ -210,6 +221,17 @@ def _discover_for_row(
         )
     )
     if policy is None:
+        if runtime_policy_resolution_enabled:
+            runtime = resolve_identity_and_source_policy(
+                row,
+                search_provider=search_provider,
+                enrichment_provider=enrichment_provider or ManufacturerEnrichmentProvider(),
+                manufacturer_reference=manufacturer_reference,
+                brand_reference=brand_reference,
+                authority_verifier=runtime_authority_verifier,
+                max_results=max_results_per_query,
+            )
+            return _runtime_outcome(runtime)
         return _DiscoveryOutcome(
             diagnostics=[
                 EnrichmentSourceDiagnostic(
@@ -263,6 +285,20 @@ def _discover_for_row(
         )
         diagnostics.append(EnrichmentSourceDiagnostic(url="", success=False, error=reason))
     return _DiscoveryOutcome(verification.verified_sources, diagnostics)
+
+
+def _runtime_outcome(result: IdentityResolutionResult) -> _DiscoveryOutcome:
+    if result.state == "resolvable":
+        return _DiscoveryOutcome(
+            verified_sources=result.verified_sources,
+            diagnostics=[],
+        )
+    reason = f"Identity/source policy resolution UNKNOWN: {result.reason}"
+    if result.diagnostics:
+        reason = f"{reason} {' | '.join(result.diagnostics)}"
+    return _DiscoveryOutcome(
+        diagnostics=[EnrichmentSourceDiagnostic(url="", success=False, error=reason)]
+    )
 
 
 def _resolve_source_urls(

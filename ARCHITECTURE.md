@@ -35,9 +35,9 @@ CatalogInputRow from CSV
           ↓
 Controlled manufacturer/brand/reference resolution
           ↓
-Controlled manufacturer/brand policy resolution
+  Controlled manufacturer/brand policy resolution
           ↓
-Governed candidate discovery / explicit approved URLs
+  Governed candidate discovery / explicit approved URLs
         ↓
 Exact MPN verification
         ↓
@@ -82,6 +82,10 @@ The current catalogue implementation has generic single-row enrichment plus dete
 Policies are governance configuration, not product-specific application logic. They contain only controlled
 manufacturer/brand identity, approved HTTPS domains, and governance metadata. They contain no attributes, delivery
 values, or expected-output values. Raw manufacturer/brand text and search results never create trusted policies.
+
+Runtime resolution is explicitly three-state: `KNOWN` uses the controlled policy registry; `RESOLVABLE` requires
+independent deterministic authority evidence, approved HTTPS-domain checks, and exact-MPN retrieval before creating an
+ephemeral in-memory policy; `UNKNOWN` becomes `NEEDS_REVIEW`. Runtime policies are never persisted automatically.
 
 ## Safety boundaries
 

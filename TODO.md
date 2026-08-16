@@ -17,7 +17,8 @@ Completed MVP work is recorded so the backlog does not present implemented featu
 - [DONE] Governed manufacturer-source candidate discovery and verification boundary
 - [DONE] Concrete Brave web-search provider with fail-closed configuration
 - [DONE] Concrete Serper web-search provider with fail-closed configuration
-- [DONE] Small pilot-only manufacturer-domain registry for three known manufacturers
+- [DONE] Controlled manufacturer/brand governance-policy registry with approved domains
+- [DONE] Ephemeral three-state runtime identity/source-policy resolution
 - [DONE] Generic single-row catalogue enrichment
 - [DONE] Row-isolated catalogue batch orchestration with deterministic summaries
 - [DONE] Unified review/exception layer and delivery gating
@@ -38,6 +39,7 @@ Completed MVP work is recorded so the backlog does not present implemented featu
 - [DONE] Define governed discovery with explicit allowlists.
 - [TODO] Add an authoritative manufacturer cross-reference provider.
 - [TODO] Expand approved manufacturer domains through tested configuration.
+- [TODO] Add production-grade independent authority verification for runtime policy candidates.
 - [TODO] Add a small, explicitly selected real-search pilot configuration for manually verified manufacturers.
 - [TODO] Run the six-row real Serper pilot using the pilot registry.
 - [TODO] Preserve exact MPN verification and the evidence firewall.

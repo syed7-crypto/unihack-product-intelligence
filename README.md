@@ -42,6 +42,9 @@ Gemini must use only supplied source text. Found values require matching source 
 - The six original pilot MPN fixtures remain as compatibility entries. New products resolve policies by controlled
   manufacturer/brand identity, not by product-specific application branches.
 - Batch discovery is optional and policy-gated; there is no automatic discovery for the full 1000-row catalogue.
+- Optional runtime resolution has three states: `KNOWN` uses a controlled policy; `RESOLVABLE` requires an injected
+  authority verifier plus search and exact-MPN verification before creating an in-memory policy; `UNKNOWN` becomes
+  `NEEDS_REVIEW`. Runtime policies are ephemeral and never modify the trusted registry.
 - No RAG, graph database, OCR/image processing, production persistence, cloud deployment, or catalogue-management UI.
 
 ## Setup and usage

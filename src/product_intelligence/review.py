@@ -215,7 +215,15 @@ def build_review_report(
                     )
                 )
 
-    if pipeline_result is None and source_diagnostics and not successful_sources:
+    if (
+        pipeline_result is None
+        and source_diagnostics
+        and not successful_sources
+        and not all(
+            "identity/source policy resolution unknown" in str(getattr(item, "error", "")).casefold()
+            for item in source_diagnostics
+        )
+    ):
         add(
             ReviewIssue(
                 code="SOURCE_RETRIEVAL_FAILED",
@@ -244,6 +252,8 @@ def build_review_report(
 
 def _source_error_details(error: str, has_successful_source: bool) -> tuple[str, ReviewSeverity, ReviewScope]:
     lowered = error.casefold()
+    if "identity/source policy resolution unknown" in lowered:
+        return "IDENTITY_UNRESOLVED", "warning", "row"
     if "pipeline failed" in lowered:
         code = _pipeline_error_code(error)
         if code == "PIPELINE_FAILED":
