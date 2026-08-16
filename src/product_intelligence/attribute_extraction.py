@@ -42,12 +42,28 @@ class ExtractedAttribute(BaseModel):
         return self
 
 
+class RejectedAttribute(BaseModel):
+    """A proposed value rejected by deterministic evidence validation."""
+
+    name: str = Field(min_length=1)
+    code: Literal[
+        "EVIDENCE_MISSING",
+        "EVIDENCE_SOURCE_MISMATCH",
+        "EVIDENCE_QUOTE_NOT_FOUND",
+        "EVIDENCE_VALUE_NOT_IN_QUOTE",
+        "EVIDENCE_LOCATION_INVALID",
+    ]
+    message: str = Field(min_length=1)
+    proposed_value: str | None = None
+
+
 class AttributeExtractionResult(BaseModel):
     """Validated values for all attributes in a product identification result."""
 
     model_config = ConfigDict(extra="ignore")
 
     attributes: list[ExtractedAttribute] = Field(min_length=1)
+    rejected_attributes: list[RejectedAttribute] = Field(default_factory=list)
 
 
 class AttributeExtractionError(RuntimeError):
@@ -111,27 +127,91 @@ def _validate_against_input(
     if set(actual_names) != expected_names:
         raise ValueError("Gemini must return exactly the identified attributes.")
 
+    accepted: list[ExtractedAttribute] = []
+    rejected: list[RejectedAttribute] = []
     for attribute in result.attributes:
         if attribute.status != "found":
+            accepted.append(attribute)
             continue
         assert attribute.evidence is not None  # enforced by the Pydantic model
         evidence = attribute.evidence
         if evidence.source_id != source.source_id or evidence.source_name != source.source_name:
-            raise ValueError(f"Evidence for '{attribute.name}' references another source.")
+            rejected.append(_rejected(attribute, "EVIDENCE_SOURCE_MISMATCH", "Evidence references another source."))
+            accepted.append(_not_found(attribute))
+            continue
         if not _quote_occurs_in_source(evidence.quote, source.extracted_text):
-            raise ValueError(f"Evidence quote for '{attribute.name}' is not in the source.")
+            rejected.append(_rejected(attribute, "EVIDENCE_QUOTE_NOT_FOUND", "Evidence quote is not in the source."))
+            accepted.append(_not_found(attribute))
+            continue
         if not attribute.value.strip() or not _quote_occurs_in_source(attribute.value, evidence.quote):
-            raise ValueError(f"Value for '{attribute.name}' is not supported by its evidence quote.")
+            rejected.append(_rejected(attribute, "EVIDENCE_VALUE_NOT_IN_QUOTE", "The value is not supported by its evidence quote."))
+            accepted.append(_not_found(attribute))
+            continue
         if evidence.location:
-            known_locations = {location.label for location in source.locations}
-            if evidence.location not in known_locations:
-                raise ValueError(f"Unknown source location '{evidence.location}'.")
+            if source.source_type == "web":
+                canonical_location = _canonical_web_location(evidence.location, source)
+            else:
+                canonical_location = _canonical_location(evidence.location, source)
+                if canonical_location is None:
+                    rejected.append(_rejected(attribute, "EVIDENCE_LOCATION_INVALID", f"Unknown source location '{evidence.location}'."))
+                    accepted.append(_not_found(attribute))
+                    continue
+            attribute = attribute.model_copy(
+                update={
+                    "evidence": evidence.model_copy(
+                        update={"location": canonical_location}
+                    )
+                }
+            )
+        elif source.source_type == "web":
+            # Webpage locations are secondary metadata. A valid quote from
+            # general page text receives the stable document location.
+            attribute = attribute.model_copy(
+                update={
+                    "evidence": evidence.model_copy(update={"location": "document"})
+                }
+            )
+        accepted.append(attribute)
+
+    result.attributes = accepted
+    result.rejected_attributes = rejected
+
+
+def _not_found(attribute: ExtractedAttribute) -> ExtractedAttribute:
+    return attribute.model_copy(update={"value": None, "status": "not_found", "evidence": None})
+
+
+def _rejected(attribute: ExtractedAttribute, code: str, message: str) -> RejectedAttribute:
+    return RejectedAttribute(
+        name=attribute.name,
+        code=code,
+        message=message,
+        proposed_value=attribute.value,
+    )
 
 
 def _quote_occurs_in_source(quote: str, source_text: str) -> bool:
     """Allow harmless whitespace differences while requiring source support."""
     normalize = lambda text: re.sub(r"\s+", " ", text).strip().casefold()
     return normalize(quote) in normalize(source_text)
+
+
+def normalize_location_label(value: str) -> str:
+    """Normalize only case and whitespace for safe location matching."""
+    return re.sub(r"\s+", " ", str(value)).strip().casefold()
+
+
+def _canonical_location(value: str, source: NormalizedSource) -> str | None:
+    requested = normalize_location_label(value)
+    for location in source.locations:
+        if normalize_location_label(location.label) == requested:
+            return location.label
+    return None
+
+
+def _canonical_web_location(value: str, source: NormalizedSource) -> str:
+    """Resolve known web headings; otherwise use document after quote checks."""
+    return _canonical_location(value, source) or "document"
 
 
 def _build_prompt(
@@ -143,6 +223,17 @@ def _build_prompt(
         for attribute in product_identification.attributes
     )
     locations = ", ".join(location.label for location in source.locations) or "not available"
+    webpage_location_rules = ""
+    if source.source_type == "web":
+        webpage_location_rules = """
+For webpage sources, use \"document\" when the supporting quote is from general
+webpage text. Use a heading location only when the evidence is specifically
+associated with one of the exact supplied heading labels. If using a heading,
+copy that heading label exactly as provided. Do not invent section names. The
+supporting quote is authoritative; location is secondary metadata and is not
+proof that the value occurs in the source.
+"""
+
     return f"""Extract actual product attribute values from the supplied source.
 
 Return only the structured JSON response requested by the response schema.
@@ -152,6 +243,7 @@ value null and evidence null when an attribute is absent or unsupported.
 Every \"found\" value MUST have evidence with the exact source_id and source_name,
 a short supporting quote copied from the source, and a source location when available.
 For PDF sources, preserve the page location whenever possible.
+{webpage_location_rules}
 
 Product type: {product_identification.product_type}
 Relevant attributes:

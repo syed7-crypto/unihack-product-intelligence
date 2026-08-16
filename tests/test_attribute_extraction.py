@@ -7,6 +7,7 @@ from src.product_intelligence.attribute_extraction import (
     AttributeExtractionError,
     AttributeExtractionResult,
     extract_attribute_values,
+    normalize_location_label,
 )
 from src.product_intelligence.extraction import NormalizedSource, SourceLocation
 from src.product_intelligence.product_identification import ProductIdentificationResult
@@ -105,8 +106,9 @@ class AttributeExtractionTests(unittest.TestCase):
             ]
         }
 
-        with self.assertRaises(AttributeExtractionError):
-            extract_attribute_values(source, valve_schema(), FakeGeminiClient(json.dumps(response)))
+        result = extract_attribute_values(source, valve_schema(), FakeGeminiClient(json.dumps(response)))
+        self.assertEqual(result.attributes[0].status, "not_found")
+        self.assertEqual(result.rejected_attributes[0].code, "EVIDENCE_VALUE_NOT_IN_QUOTE")
 
     def test_value_not_present_in_source_is_rejected(self) -> None:
         source = source_with_text("Material: Stainless Steel. Pressure rating: 150 PSI")
@@ -119,8 +121,9 @@ class AttributeExtractionTests(unittest.TestCase):
             ]
         }
 
-        with self.assertRaises(AttributeExtractionError):
-            extract_attribute_values(source, valve_schema(), FakeGeminiClient(json.dumps(response)))
+        result = extract_attribute_values(source, valve_schema(), FakeGeminiClient(json.dumps(response)))
+        self.assertEqual(result.attributes[0].status, "not_found")
+        self.assertEqual(result.rejected_attributes[0].code, "EVIDENCE_VALUE_NOT_IN_QUOTE")
 
     def test_case_and_whitespace_variation_between_value_and_quote_is_accepted(self) -> None:
         source = source_with_text("Material: Stainless   Steel")
@@ -144,8 +147,9 @@ class AttributeExtractionTests(unittest.TestCase):
         )
         response = {"attributes": [found_for_source(source, "material", "Stainless Steel", "Material: Stainless Steel", "page 99")]}
 
-        with self.assertRaises(AttributeExtractionError):
-            extract_attribute_values(source, schema, FakeGeminiClient(json.dumps(response)))
+        result = extract_attribute_values(source, schema, FakeGeminiClient(json.dumps(response)))
+        self.assertEqual(result.attributes[0].status, "not_found")
+        self.assertEqual(result.rejected_attributes[0].code, "EVIDENCE_LOCATION_INVALID")
 
     def test_invalid_json_location_is_rejected(self) -> None:
         source = source_with_type('{"material": "Stainless Steel"}', "json")
@@ -154,8 +158,9 @@ class AttributeExtractionTests(unittest.TestCase):
         )
         response = {"attributes": [found_for_source(source, "material", "Stainless Steel", '"material": "Stainless Steel"', "page 99")]}
 
-        with self.assertRaises(AttributeExtractionError):
-            extract_attribute_values(source, schema, FakeGeminiClient(json.dumps(response)))
+        result = extract_attribute_values(source, schema, FakeGeminiClient(json.dumps(response)))
+        self.assertEqual(result.attributes[0].status, "not_found")
+        self.assertEqual(result.rejected_attributes[0].code, "EVIDENCE_LOCATION_INVALID")
 
     def test_valid_pdf_location_is_accepted(self) -> None:
         source = source_with_type("Material: Stainless Steel", "pdf", "page 1")
@@ -175,8 +180,82 @@ class AttributeExtractionTests(unittest.TestCase):
         )
         response = {"attributes": [found_for_source(source, "material", "Stainless Steel", "Material: Stainless Steel", "page 2")]}
 
-        with self.assertRaises(AttributeExtractionError):
-            extract_attribute_values(source, schema, FakeGeminiClient(json.dumps(response)))
+        result = extract_attribute_values(source, schema, FakeGeminiClient(json.dumps(response)))
+        self.assertEqual(result.attributes[0].status, "not_found")
+        self.assertEqual(result.rejected_attributes[0].code, "EVIDENCE_LOCATION_INVALID")
+
+    def test_webpage_document_location_is_valid(self) -> None:
+        source = source_with_type("Product details: Stainless Steel", "web")
+        schema = ProductIdentificationResult.model_validate(
+            {"product_type": "Valve", "product_category": "Valve", "attributes": [{"name": "material", "label": "Material"}]}
+        )
+        response = {"attributes": [found_for_source(source, "material", "Stainless Steel", "Product details: Stainless Steel", "document")]}
+
+        client = FakeGeminiClient(json.dumps(response))
+        result = extract_attribute_values(source, schema, client)
+
+        self.assertEqual(result.attributes[0].evidence.location, "document")
+        self.assertIn('For webpage sources, use "document"', client.prompt)
+        self.assertIn("copy that heading label exactly as provided", client.prompt)
+
+    def test_webpage_heading_formatting_resolves_to_canonical_label(self) -> None:
+        source = source_with_type("Stainless Steel body", "web", "Product Details")
+        schema = ProductIdentificationResult.model_validate(
+            {"product_type": "Valve", "product_category": "Valve", "attributes": [{"name": "material", "label": "Material"}]}
+        )
+        response = {"attributes": [found_for_source(source, "material", "Stainless Steel", "Stainless Steel body", " PRODUCT   DETAILS ")]}
+
+        result = extract_attribute_values(source, schema, FakeGeminiClient(json.dumps(response)))
+
+        self.assertEqual(result.attributes[0].evidence.location, "Product Details")
+        self.assertEqual(normalize_location_label(" PRODUCT   DETAILS "), "product details")
+
+    def test_webpage_unknown_or_inferred_heading_falls_back_to_document(self) -> None:
+        source = source_with_type("Stainless Steel body", "web", "Product Details")
+        schema = ProductIdentificationResult.model_validate(
+            {"product_type": "Valve", "product_category": "Valve", "attributes": [{"name": "material", "label": "Material"}]}
+        )
+
+        for location in ("Unknown Section", "Product Details > Specifications"):
+            response = {"attributes": [found_for_source(source, "material", "Stainless Steel", "Stainless Steel body", location)]}
+            result = extract_attribute_values(source, schema, FakeGeminiClient(json.dumps(response)))
+            self.assertEqual(result.attributes[0].status, "found")
+            self.assertEqual(result.attributes[0].evidence.location, "document")
+
+    def test_webpage_missing_location_falls_back_to_document(self) -> None:
+        source = source_with_type("Stainless Steel body", "web", "Product Details")
+        schema = ProductIdentificationResult.model_validate(
+            {"product_type": "Valve", "product_category": "Valve", "attributes": [{"name": "material", "label": "Material"}]}
+        )
+        response = {
+            "attributes": [{
+                "name": "material",
+                "value": "Stainless Steel",
+                "status": "found",
+                "evidence": {
+                    "source_id": source.source_id,
+                    "source_name": source.source_name,
+                    "location": None,
+                    "quote": "Stainless Steel body",
+                },
+            }]
+        }
+
+        result = extract_attribute_values(source, schema, FakeGeminiClient(json.dumps(response)))
+
+        self.assertEqual(result.attributes[0].evidence.location, "document")
+
+    def test_webpage_location_fix_does_not_bypass_quote_validation(self) -> None:
+        source = source_with_type("Stainless Steel body", "web", "Product Details")
+        schema = ProductIdentificationResult.model_validate(
+            {"product_type": "Valve", "product_category": "Valve", "attributes": [{"name": "material", "label": "Material"}]}
+        )
+        response = {"attributes": [found_for_source(source, "material", "Carbon Steel", "Stainless Steel body", " product details ")]}
+
+        result = extract_attribute_values(source, schema, FakeGeminiClient(json.dumps(response)))
+
+        self.assertEqual(result.attributes[0].status, "not_found")
+        self.assertEqual(result.rejected_attributes[0].code, "EVIDENCE_VALUE_NOT_IN_QUOTE")
 
     def test_values_are_extracted_from_an_industrial_source(self) -> None:
         source = source_with_text(
@@ -259,6 +338,33 @@ class AttributeExtractionTests(unittest.TestCase):
         with self.assertRaises(AttributeExtractionError):
             extract_attribute_values(source, valve_schema(), FakeGeminiClient(json.dumps(response)))
 
+    def test_invalid_attribute_does_not_discard_valid_attribute(self) -> None:
+        source = source_with_text("Material: Stainless Steel. Pressure: 150 PSI")
+        schema = ProductIdentificationResult.model_validate(
+            {
+                "product_type": "Valve",
+                "product_category": "Valve",
+                "attributes": [
+                    {"name": "material", "label": "Material"},
+                    {"name": "pressure_rating", "label": "Pressure"},
+                ],
+            }
+        )
+        response = {
+            "attributes": [
+                found("material", "Stainless Steel", "Material: Stainless Steel"),
+                found("pressure_rating", "200 PSI", "Pressure: 150 PSI"),
+            ]
+        }
+
+        result = extract_attribute_values(source, schema, FakeGeminiClient(json.dumps(response)))
+
+        self.assertEqual(result.attributes[0].status, "found")
+        self.assertEqual(result.attributes[0].value, "Stainless Steel")
+        self.assertEqual(result.attributes[1].status, "not_found")
+        self.assertEqual(result.rejected_attributes[0].name, "pressure_rating")
+        self.assertIsNone(result.attributes[1].evidence)
+
     def test_evidence_quote_not_in_source_is_rejected(self) -> None:
         source = source_with_text("Industrial valve with stainless steel body.")
         response = {
@@ -270,8 +376,9 @@ class AttributeExtractionTests(unittest.TestCase):
             ]
         }
 
-        with self.assertRaises(AttributeExtractionError):
-            extract_attribute_values(source, valve_schema(), FakeGeminiClient(json.dumps(response)))
+        result = extract_attribute_values(source, valve_schema(), FakeGeminiClient(json.dumps(response)))
+        self.assertEqual(result.attributes[0].status, "not_found")
+        self.assertEqual(result.rejected_attributes[0].code, "EVIDENCE_QUOTE_NOT_FOUND")
 
 
 if __name__ == "__main__":
