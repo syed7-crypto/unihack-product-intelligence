@@ -15,6 +15,7 @@ Completed MVP work is recorded so the backlog does not present implemented featu
 - [DONE] Controlled reference-resolution interfaces
 - [DONE] Controlled manufacturer retrieval and exact MPN verification
 - [DONE] Governed manufacturer-source candidate discovery and verification boundary
+- [DONE] Concrete Brave web-search provider with fail-closed configuration
 - [DONE] Generic single-row catalogue enrichment
 - [DONE] Row-isolated catalogue batch orchestration with deterministic summaries
 - [DONE] Unified review/exception layer and delivery gating
@@ -35,6 +36,7 @@ Completed MVP work is recorded so the backlog does not present implemented featu
 - [DONE] Define governed discovery with explicit allowlists.
 - [TODO] Add an authoritative manufacturer cross-reference provider.
 - [TODO] Expand approved manufacturer domains through tested configuration.
+- [TODO] Add a small, explicitly selected real-search pilot configuration for manually verified manufacturers.
 - [TODO] Preserve exact MPN verification and the evidence firewall.
 
 ## Evaluation

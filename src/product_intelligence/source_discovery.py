@@ -8,11 +8,16 @@ authoritative. Verification remains the responsibility of
 
 from __future__ import annotations
 
+import json
+import os
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
 from pathlib import PurePosixPath
 from typing import Literal, Protocol
-from urllib.parse import urlparse
+from urllib.error import HTTPError, URLError
+from urllib.parse import urlencode, urlparse, urlsplit, urlunsplit
+from urllib.request import Request, urlopen
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -27,6 +32,28 @@ DiscoveryStatus = Literal["found", "no_candidates", "failed"]
 VerificationStatus = Literal["verified", "failed", "rejected"]
 
 
+class SearchProviderError(RuntimeError):
+    """Explicit failure from a configured real search provider."""
+
+    def __init__(self, code: str, message: str) -> None:
+        self.code = code
+        self.message = message
+        super().__init__(f"{code}: {message}")
+
+
+@dataclass(frozen=True)
+class SearchTransportResponse:
+    """Small transport response used by the real provider and tests."""
+
+    status_code: int
+    body: bytes
+
+
+class SearchTransport(Protocol):
+    def __call__(self, request: Request, timeout: float) -> SearchTransportResponse:
+        ...
+
+
 class SearchResult(BaseModel):
     """Untrusted result returned by a search provider."""
 
@@ -38,6 +65,148 @@ class SearchResult(BaseModel):
 class SourceSearchProvider(Protocol):
     def search(self, query: str, max_results: int) -> list[SearchResult]:
         """Return untrusted search results in provider order."""
+
+
+class BraveSearchProvider:
+    """Real Brave Web Search API adapter.
+
+    This adapter only translates API results into ``SearchResult`` objects.
+    It does not apply manufacturer policy or verify sources.
+    """
+
+    DEFAULT_ENDPOINT = "https://api.search.brave.com/res/v1/web/search"
+
+    def __init__(
+        self,
+        api_key: str | None = None,
+        *,
+        endpoint: str = DEFAULT_ENDPOINT,
+        timeout: float = 15.0,
+        country: str | None = None,
+        search_lang: str | None = None,
+        transport: SearchTransport | None = None,
+    ) -> None:
+        self.api_key = api_key.strip() if api_key and api_key.strip() else None
+        self.endpoint = endpoint
+        self.timeout = timeout
+        self.country = country
+        self.search_lang = search_lang
+        self._transport = transport or _default_search_transport
+
+    @classmethod
+    def from_environment(cls) -> "BraveSearchProvider":
+        """Create a provider from BRAVE_SEARCH_* environment configuration.
+
+        A missing key is intentionally retained as a provider state and is
+        reported by ``search``; construction itself never fabricates results.
+        """
+        try:
+            from dotenv import load_dotenv
+
+            from pathlib import Path
+
+            load_dotenv(Path(__file__).resolve().parents[2] / ".env")
+        except ImportError:
+            pass
+        timeout_text = os.getenv("BRAVE_SEARCH_TIMEOUT", "15")
+        try:
+            timeout = float(timeout_text)
+        except ValueError:
+            raise SearchProviderError(
+                "invalid_configuration", "BRAVE_SEARCH_TIMEOUT must be numeric."
+            ) from None
+        return cls(
+            os.getenv("BRAVE_SEARCH_API_KEY"),
+            endpoint=os.getenv("BRAVE_SEARCH_ENDPOINT", cls.DEFAULT_ENDPOINT),
+            timeout=timeout,
+            country=os.getenv("BRAVE_SEARCH_COUNTRY"),
+            search_lang=os.getenv("BRAVE_SEARCH_LANG"),
+        )
+
+    def search(self, query: str, max_results: int) -> list[SearchResult]:
+        if not self.api_key:
+            raise SearchProviderError(
+                "missing_api_key",
+                "BRAVE_SEARCH_API_KEY is not configured; real discovery is unavailable.",
+            )
+        if not query.strip():
+            raise SearchProviderError("invalid_query", "Search query must not be empty.")
+        if max_results < 1:
+            raise SearchProviderError("invalid_limit", "max_results must be positive.")
+
+        params = {"q": query.strip(), "count": str(min(max_results, 20))}
+        if self.country:
+            params["country"] = self.country
+        if self.search_lang:
+            params["search_lang"] = self.search_lang
+        request = Request(
+            f"{self.endpoint}?{urlencode(params)}",
+            headers={
+                "Accept": "application/json",
+                "X-Subscription-Token": self.api_key,
+                "User-Agent": "UniHackProductIntelligence/1.0",
+            },
+            method="GET",
+        )
+        try:
+            response = self._transport(request, self.timeout)
+        except HTTPError as error:
+            code = "rate_limited" if error.code == 429 else "http_error"
+            raise SearchProviderError(code, f"Search API returned HTTP {error.code}.") from error
+        except (URLError, TimeoutError, OSError) as error:
+            raise SearchProviderError("provider_unavailable", str(error) or "Search request failed.") from error
+
+        if response.status_code == 429:
+            raise SearchProviderError("rate_limited", "Search API rate limit was reached.")
+        if response.status_code < 200 or response.status_code >= 300:
+            raise SearchProviderError(
+                "http_error", f"Search API returned HTTP {response.status_code}."
+            )
+        try:
+            payload = json.loads(response.body.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as error:
+            raise SearchProviderError("malformed_response", "Search API returned invalid JSON.") from error
+        results = payload.get("web", {}).get("results") if isinstance(payload, dict) else None
+        if not isinstance(results, list):
+            raise SearchProviderError(
+                "malformed_response", "Search API response did not contain web.results."
+            )
+
+        normalized: list[SearchResult] = []
+        for item in results:
+            if not isinstance(item, dict) or not isinstance(item.get("url"), str):
+                raise SearchProviderError(
+                    "malformed_response", "A search result did not contain a URL."
+                )
+            try:
+                url = _normalize_search_url(item["url"])
+            except ValueError as error:
+                raise SearchProviderError("invalid_result_url", str(error)) from error
+            title = item.get("title", "")
+            description = item.get("description", "")
+            if not isinstance(title, str) or not isinstance(description, str):
+                raise SearchProviderError(
+                    "malformed_response", "A search result title or description was not text."
+                )
+            normalized.append(SearchResult(url=url, title=title, snippet=description))
+        return normalized
+
+
+def _default_search_transport(request: Request, timeout: float) -> SearchTransportResponse:
+    with urlopen(request, timeout=timeout) as response:  # nosec B310: configured API endpoint
+        return SearchTransportResponse(response.status, response.read())
+
+
+def _normalize_search_url(value: str) -> str:
+    raw = value.strip()
+    parsed = urlsplit(raw)
+    if parsed.scheme.casefold() not in {"http", "https"} or not parsed.hostname:
+        raise ValueError("Search result contained an invalid HTTP(S) URL.")
+    hostname = parsed.hostname.casefold()
+    netloc = hostname
+    if parsed.port is not None:
+        netloc = f"{netloc}:{parsed.port}"
+    return urlunsplit((parsed.scheme.casefold(), netloc, parsed.path or "/", parsed.query, ""))
 
 
 class InMemorySourceSearchProvider:
@@ -132,6 +301,67 @@ class DiscoveredSourceVerificationResult(BaseModel):
     discovery: SourceDiscoveryResult
     verified_sources: list[ManufacturerSource] = Field(default_factory=list)
     diagnostics: list[SourceVerificationDiagnostic] = Field(default_factory=list)
+
+
+class DiscoveryPilotRowResult(BaseModel):
+    """Structured diagnostic for one explicitly selected pilot row."""
+
+    mfg_part_num: str
+    manufacturer_candidate: str
+    brand_candidates: dict[str, str | None]
+    discovery: SourceDiscoveryResult | None = None
+    verification: DiscoveredSourceVerificationResult | None = None
+    error: str | None = None
+
+
+def run_discovery_pilot(
+    rows: Sequence[CatalogInputRow],
+    policy_for_row: Callable[[CatalogInputRow], ManufacturerSourcePolicy | None],
+    search_provider: SourceSearchProvider,
+    enrichment_provider: ManufacturerEnrichmentProvider,
+) -> list[DiscoveryPilotRowResult]:
+    """Run discovery for caller-selected rows only.
+
+    This helper never reads the expected-output CSV and never expands the
+    caller's row selection. A missing policy is an explicit pilot failure.
+    """
+    reports: list[DiscoveryPilotRowResult] = []
+    for row in rows:
+        policy = policy_for_row(row)
+        if policy is None:
+            reports.append(
+                DiscoveryPilotRowResult(
+                    mfg_part_num=row.Mfg_Part_Num,
+                    manufacturer_candidate=row.Part_Manuf,
+                    brand_candidates=row.brand_candidates(),
+                    error="No explicit manufacturer source policy was configured for this row.",
+                )
+            )
+            continue
+        try:
+            verification = discover_and_verify_sources(
+                row, policy, search_provider, enrichment_provider
+            )
+            discovery = verification.discovery
+            reports.append(
+                DiscoveryPilotRowResult(
+                    mfg_part_num=row.Mfg_Part_Num,
+                    manufacturer_candidate=row.Part_Manuf,
+                    brand_candidates=row.brand_candidates(),
+                    discovery=discovery,
+                    verification=verification,
+                )
+            )
+        except (SearchProviderError, RuntimeError, ValueError, OSError) as error:
+            reports.append(
+                DiscoveryPilotRowResult(
+                    mfg_part_num=row.Mfg_Part_Num,
+                    manufacturer_candidate=row.Part_Manuf,
+                    brand_candidates=row.brand_candidates(),
+                    error=str(error),
+                )
+            )
+    return reports
 
 
 def generate_discovery_queries(

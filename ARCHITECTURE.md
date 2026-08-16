@@ -64,7 +64,7 @@ The current catalogue implementation has generic single-row enrichment plus dete
 - `confidence_scoring.py`: bounded explainable confidence.
 - `pipeline.py`: document orchestrator and `ProductIntelligenceResult`.
 - `manufacturer_enrichment.py`: approved-domain retrieval, exact MPN verification, and web/PDF conversion.
-- `source_discovery.py`: untrusted search candidates, explicit policy filtering, and discovery-to-verification diagnostics.
+- `source_discovery.py`: deterministic queries, the Brave search adapter, untrusted candidates, explicit policy filtering, selected-row pilot diagnostics, and discovery-to-verification diagnostics.
 - `reference_data.py`: deterministic reference interfaces; fixtures are mock/test data.
 - `catalog_input.py`, `delivery_schema.py`, `delivery_output.py`: catalogue and exact 252-column handling.
 - `catalogue_enrichment.py`: generic row orchestration and evaluation comparison.
@@ -78,4 +78,4 @@ Every accepted attribute retains evidence tied to a real source. The quote and v
 
 ## Out of scope
 
-RAG, graph databases, OCR/image processing, unrestricted source discovery, automatic batch searching, fuzzy identifier matching, automatic cross-reference, production persistence, authentication, cloud deployment, and a catalogue-management UI.
+RAG, graph databases, OCR/image processing, unrestricted source discovery, automatic full-catalogue searching, fuzzy identifier matching, automatic cross-reference, production persistence, authentication, cloud deployment, and a catalogue-management UI.

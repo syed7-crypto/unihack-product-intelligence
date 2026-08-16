@@ -22,6 +22,7 @@ There are 100 passing tests at this checkpoint; the count may change as the proj
 - end-to-end pipeline orchestration
 - controlled manufacturer retrieval, allowlists, exact MPN verification, and web/PDF normalization
 - governed source discovery, policy filtering, candidate deduplication, and discovery-to-verification boundaries
+- mocked Brave provider configuration, response normalization, malformed/rate-limited responses, and missing-key behavior
 - catalogue CSV input and six-field preservation
 - exact 252-column delivery schema and comparison
 - controlled reference resolution and no silent fallback
@@ -33,3 +34,5 @@ Tests use local controlled product, catalogue, delivery, and mock-reference fixt
 `python scripts/run_real_pipeline.py` is a manual real-Gemini check and is not part of the normal suite.
 
 Future work includes scale tests for bulk processing, official reference-data integration tests, and additional approved manufacturer domains.
+
+The real Brave provider is not called by the normal suite. A real pilot requires `BRAVE_SEARCH_API_KEY` and an explicitly selected row list; it must not be run against all 1,000 rows as part of ordinary testing.

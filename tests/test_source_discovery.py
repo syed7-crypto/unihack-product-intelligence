@@ -8,12 +8,16 @@ from src.product_intelligence.manufacturer_enrichment import (
 )
 from src.product_intelligence.reference_data import ReferenceResolutionResult
 from src.product_intelligence.source_discovery import (
+    BraveSearchProvider,
     InMemorySourceSearchProvider,
     ManufacturerSourcePolicy,
     SearchResult,
+    SearchProviderError,
+    SearchTransportResponse,
     discover_and_verify_sources,
     discover_manufacturer_sources,
     generate_discovery_queries,
+    run_discovery_pilot,
 )
 
 
@@ -239,6 +243,98 @@ class SourceDiscoveryTests(unittest.TestCase):
         with patch("src.product_intelligence.gemini_client.create_gemini_client") as client:
             discover_manufacturer_sources(catalogue_row(), self.policy(), provider)
         client.assert_not_called()
+
+    def test_real_provider_missing_api_key_fails_closed(self) -> None:
+        provider = BraveSearchProvider(api_key=None)
+
+        with self.assertRaises(SearchProviderError) as context:
+            provider.search("59210 Hunter", 5)
+
+        self.assertEqual(context.exception.code, "missing_api_key")
+
+    def test_real_provider_normalizes_response_and_preserves_title_snippet(self) -> None:
+        requests = []
+
+        def transport(request, timeout):
+            requests.append(request)
+            return SearchTransportResponse(
+                200,
+                b'{"web":{"results":[{"url":" HTTPS://Example.COM/manual#section ","title":"Exact title","description":"Exact snippet"}]}}',
+            )
+
+        provider = BraveSearchProvider(api_key="test-key", transport=transport)
+        results = provider.search("59210 Hunter", 5)
+
+        self.assertEqual(results[0].url, "https://example.com/manual")
+        self.assertEqual(results[0].title, "Exact title")
+        self.assertEqual(results[0].snippet, "Exact snippet")
+        self.assertIn("q=59210+Hunter", requests[0].full_url)
+        self.assertTrue(any(key.casefold() == "x-subscription-token" for key in requests[0].headers))
+
+    def test_real_provider_empty_results_are_successful_empty_candidates(self) -> None:
+        provider = BraveSearchProvider(
+            api_key="test-key",
+            transport=lambda request, timeout: SearchTransportResponse(
+                200, b'{"web":{"results":[]}}'
+            ),
+        )
+
+        self.assertEqual(provider.search("59210 Hunter", 5), [])
+
+    def test_real_provider_reports_rate_limit_http_and_malformed_responses(self) -> None:
+        responses = [
+            SearchTransportResponse(429, b""),
+            SearchTransportResponse(503, b""),
+            SearchTransportResponse(200, b"not-json"),
+            SearchTransportResponse(200, b'{"web":{"results":[{"title":"missing url"}]}}'),
+            SearchTransportResponse(200, b'{"web":{"results":[{"url":"file:///tmp/a"}]}}'),
+        ]
+        expected_codes = [
+            "rate_limited",
+            "http_error",
+            "malformed_response",
+            "malformed_response",
+            "invalid_result_url",
+        ]
+        for response, code in zip(responses, expected_codes):
+            provider = BraveSearchProvider(
+                api_key="test-key", transport=lambda request, timeout, r=response: r
+            )
+            with self.subTest(code=code), self.assertRaises(SearchProviderError) as context:
+                provider.search("59210 Hunter", 5)
+            self.assertEqual(context.exception.code, code)
+
+    def test_missing_real_provider_is_explicit_in_discovery(self) -> None:
+        result = discover_manufacturer_sources(
+            catalogue_row(),
+            self.policy(),
+            BraveSearchProvider(api_key=None),
+        )
+
+        self.assertEqual(result.status, "failed")
+        self.assertIn("missing_api_key", result.errors[0])
+
+    def test_pilot_processes_only_caller_selected_rows(self) -> None:
+        rows = [catalogue_row()]
+        search = InMemorySourceSearchProvider({})
+        enrichment = ManufacturerEnrichmentProvider(
+            approved_domains={"hunterfan.com"},
+            fetcher=lambda url, timeout: RetrievedPayload(
+                200, {"content-type": "text/html"}, b"No exact model"
+            ),
+        )
+
+        reports = run_discovery_pilot(
+            rows,
+            lambda row: self.policy(),
+            search,
+            enrichment,
+        )
+
+        self.assertEqual(len(reports), 1)
+        self.assertEqual(reports[0].mfg_part_num, MPN)
+        self.assertEqual(reports[0].discovery.status, "no_candidates")
+        self.assertEqual(reports[0].verification.verified_sources, [])
 
 
 if __name__ == "__main__":
