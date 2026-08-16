@@ -14,6 +14,7 @@ from src.product_intelligence.source_discovery import (
     SearchResult,
     SearchProviderError,
     SearchTransportResponse,
+    SerperSearchProvider,
     discover_and_verify_sources,
     discover_manufacturer_sources,
     generate_discovery_queries,
@@ -335,6 +336,114 @@ class SourceDiscoveryTests(unittest.TestCase):
         self.assertEqual(reports[0].mfg_part_num, MPN)
         self.assertEqual(reports[0].discovery.status, "no_candidates")
         self.assertEqual(reports[0].verification.verified_sources, [])
+
+    def test_serper_missing_api_key_fails_closed(self) -> None:
+        provider = SerperSearchProvider(api_key=None)
+
+        with self.assertRaises(SearchProviderError) as context:
+            provider.search("59210 Hunter", 5)
+
+        self.assertEqual(context.exception.code, "missing_api_key")
+
+    def test_serper_parses_organic_results_and_preserves_order(self) -> None:
+        requests = []
+
+        def transport(request, timeout):
+            requests.append(request)
+            return SearchTransportResponse(
+                200,
+                b'{"knowledgeGraph":{"title":"not a result"},"organic":['
+                b'{"title":"First","link":" https://Example.COM/first#x ","snippet":"First snippet"},'
+                b'{"title":"Second","link":"https://example.com/second","snippet":"Second snippet"}'
+                b']}',
+            )
+
+        provider = SerperSearchProvider(
+            api_key="serper-secret",
+            country="us",
+            language="en",
+            transport=transport,
+        )
+        results = provider.search("59210 Hunter", 2)
+
+        self.assertEqual([item.url for item in results], ["https://example.com/first", "https://example.com/second"])
+        self.assertEqual([item.title for item in results], ["First", "Second"])
+        self.assertEqual([item.snippet for item in results], ["First snippet", "Second snippet"])
+        self.assertEqual(requests[0].method, "POST")
+        self.assertIn(b'"num": 2', requests[0].data)
+        self.assertNotIn(b"serper-secret", requests[0].data)
+        self.assertTrue(any(key.casefold() == "x-api-key" for key in requests[0].headers))
+
+    def test_serper_empty_organic_results_are_empty(self) -> None:
+        provider = SerperSearchProvider(
+            api_key="test-key",
+            transport=lambda request, timeout: SearchTransportResponse(
+                200, b'{"organic":[]}'
+            ),
+        )
+
+        self.assertEqual(provider.search("59210 Hunter", 5), [])
+
+    def test_serper_reports_response_and_http_failures_without_exposing_key(self) -> None:
+        secret = "do-not-leak-serper-secret"
+        responses = [
+            SearchTransportResponse(401, b""),
+            SearchTransportResponse(403, b""),
+            SearchTransportResponse(429, b""),
+            SearchTransportResponse(500, b""),
+            SearchTransportResponse(200, b"not-json"),
+            SearchTransportResponse(200, b'{"searchParameters":{}}'),
+            SearchTransportResponse(200, b'{"organic":[{"title":"missing link"}]}'),
+            SearchTransportResponse(200, b'{"organic":[{"link":"file:///tmp/a"}]}'),
+        ]
+        expected_codes = [
+            "http_error",
+            "http_error",
+            "rate_limited",
+            "http_error",
+            "malformed_response",
+            "malformed_response",
+            "malformed_response",
+            "invalid_result_url",
+        ]
+        for response, code in zip(responses, expected_codes):
+            provider = SerperSearchProvider(
+                api_key=secret,
+                transport=lambda request, timeout, r=response: r,
+            )
+            with self.subTest(code=code), self.assertRaises(SearchProviderError) as context:
+                provider.search("59210 Hunter", 5)
+            self.assertEqual(context.exception.code, code)
+            self.assertNotIn(secret, str(context.exception))
+
+    def test_serper_reports_network_timeout_query_and_limit_errors(self) -> None:
+        provider = SerperSearchProvider(
+            api_key="test-key",
+            transport=lambda request, timeout: (_ for _ in ()).throw(TimeoutError("timed out")),
+        )
+        with self.assertRaises(SearchProviderError) as timeout_context:
+            provider.search("59210 Hunter", 5)
+        self.assertEqual(timeout_context.exception.code, "provider_unavailable")
+
+        for query, limit in (("", 5), ("59210", 0)):
+            with self.subTest(query=query, limit=limit), self.assertRaises(SearchProviderError) as context:
+                SerperSearchProvider(api_key="test-key").search(query, limit)
+            self.assertEqual(context.exception.code, "invalid_query" if not query else "invalid_limit")
+
+    def test_discovery_accepts_serper_through_existing_interface(self) -> None:
+        provider = SerperSearchProvider(
+            api_key="test-key",
+            transport=lambda request, timeout: SearchTransportResponse(
+                200,
+                b'{"organic":[{"title":"Candidate","link":"https://amazon.com/59210","snippet":"59210"}]}',
+            ),
+        )
+
+        result = discover_manufacturer_sources(catalogue_row(), self.policy(), provider)
+
+        self.assertEqual(result.status, "found")
+        self.assertEqual(result.candidates[0].status, "rejected")
+        self.assertEqual(result.candidates[0].title, "Candidate")
 
 
 if __name__ == "__main__":

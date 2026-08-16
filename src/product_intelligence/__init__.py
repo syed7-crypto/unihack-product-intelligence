@@ -106,6 +106,7 @@ from .source_discovery import (
     SearchResult,
     SearchProviderError,
     SearchTransportResponse,
+    SerperSearchProvider,
     SourceDiscoveryResult,
     SourceSearchProvider,
     SourceVerificationDiagnostic,
@@ -114,6 +115,7 @@ from .source_discovery import (
     generate_discovery_queries,
     run_discovery_pilot,
 )
+from .pilot_policies import get_pilot_source_policy
 
 __all__ = [
     "AttributeEvidence",
@@ -191,6 +193,7 @@ __all__ = [
     "DiscoveryPilotRowResult",
     "BraveSearchProvider",
     "InMemorySourceSearchProvider",
+    "SerperSearchProvider",
     "ManufacturerSourcePolicy",
     "SearchResult",
     "SearchProviderError",
@@ -202,4 +205,5 @@ __all__ = [
     "discover_manufacturer_sources",
     "generate_discovery_queries",
     "run_discovery_pilot",
+    "get_pilot_source_policy",
 ]

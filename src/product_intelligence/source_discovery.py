@@ -192,6 +192,131 @@ class BraveSearchProvider:
         return normalized
 
 
+class SerperSearchProvider:
+    """Real Serper Google Search API adapter.
+
+    Only organic results are converted to ``SearchResult`` objects. The
+    provider never performs source-policy filtering or MPN verification.
+    """
+
+    DEFAULT_ENDPOINT = "https://google.serper.dev/search"
+
+    def __init__(
+        self,
+        api_key: str | None = None,
+        *,
+        endpoint: str = DEFAULT_ENDPOINT,
+        timeout: float = 15.0,
+        country: str | None = None,
+        language: str | None = None,
+        transport: SearchTransport | None = None,
+    ) -> None:
+        self.api_key = api_key.strip() if api_key and api_key.strip() else None
+        self.endpoint = endpoint
+        self.timeout = timeout
+        self.country = country
+        self.language = language
+        self._transport = transport or _default_search_transport
+
+    @classmethod
+    def from_environment(cls) -> "SerperSearchProvider":
+        """Create a provider from SERPER_SEARCH_* environment configuration."""
+        try:
+            from dotenv import load_dotenv
+            from pathlib import Path
+
+            load_dotenv(Path(__file__).resolve().parents[2] / ".env")
+        except ImportError:
+            pass
+        timeout_text = os.getenv("SERPER_SEARCH_TIMEOUT", "15")
+        try:
+            timeout = float(timeout_text)
+        except ValueError:
+            raise SearchProviderError(
+                "invalid_configuration", "SERPER_SEARCH_TIMEOUT must be numeric."
+            ) from None
+        return cls(
+            os.getenv("SERPER_API_KEY"),
+            endpoint=os.getenv("SERPER_SEARCH_ENDPOINT", cls.DEFAULT_ENDPOINT),
+            timeout=timeout,
+            country=os.getenv("SERPER_SEARCH_COUNTRY", "us"),
+            language=os.getenv("SERPER_SEARCH_LANGUAGE", "en"),
+        )
+
+    def search(self, query: str, max_results: int) -> list[SearchResult]:
+        if not self.api_key:
+            raise SearchProviderError(
+                "missing_api_key",
+                "SERPER_API_KEY is not configured; real discovery is unavailable.",
+            )
+        if not query.strip():
+            raise SearchProviderError("invalid_query", "Search query must not be empty.")
+        if max_results < 1:
+            raise SearchProviderError("invalid_limit", "max_results must be positive.")
+
+        body: dict[str, object] = {
+            "q": query.strip(),
+            "num": min(max_results, 100),
+        }
+        if self.country:
+            body["gl"] = self.country
+        if self.language:
+            body["hl"] = self.language
+        request = Request(
+            self.endpoint,
+            data=json.dumps(body).encode("utf-8"),
+            headers={
+                "Accept": "application/json",
+                "Content-Type": "application/json",
+                "X-API-KEY": self.api_key,
+                "User-Agent": "UniHackProductIntelligence/1.0",
+            },
+            method="POST",
+        )
+        try:
+            response = self._transport(request, self.timeout)
+        except HTTPError as error:
+            code = "rate_limited" if error.code == 429 else "http_error"
+            raise SearchProviderError(code, f"Search API returned HTTP {error.code}.") from error
+        except (URLError, TimeoutError, OSError) as error:
+            raise SearchProviderError("provider_unavailable", str(error) or "Search request failed.") from error
+
+        if response.status_code == 429:
+            raise SearchProviderError("rate_limited", "Search API rate limit was reached.")
+        if response.status_code < 200 or response.status_code >= 300:
+            raise SearchProviderError(
+                "http_error", f"Search API returned HTTP {response.status_code}."
+            )
+        try:
+            payload = json.loads(response.body.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as error:
+            raise SearchProviderError("malformed_response", "Search API returned invalid JSON.") from error
+        organic = payload.get("organic") if isinstance(payload, dict) else None
+        if not isinstance(organic, list):
+            raise SearchProviderError(
+                "malformed_response", "Search API response did not contain organic results."
+            )
+
+        normalized: list[SearchResult] = []
+        for item in organic:
+            if not isinstance(item, dict) or not isinstance(item.get("link"), str):
+                raise SearchProviderError(
+                    "malformed_response", "An organic result did not contain a URL."
+                )
+            try:
+                url = _normalize_search_url(item["link"])
+            except ValueError as error:
+                raise SearchProviderError("invalid_result_url", str(error)) from error
+            title = item.get("title", "")
+            snippet = item.get("snippet", "")
+            if not isinstance(title, str) or not isinstance(snippet, str):
+                raise SearchProviderError(
+                    "malformed_response", "An organic result title or snippet was not text."
+                )
+            normalized.append(SearchResult(url=url, title=title, snippet=snippet))
+        return normalized
+
+
 def _default_search_transport(request: Request, timeout: float) -> SearchTransportResponse:
     with urlopen(request, timeout=timeout) as response:  # nosec B310: configured API endpoint
         return SearchTransportResponse(response.status, response.read())
@@ -316,15 +441,22 @@ class DiscoveryPilotRowResult(BaseModel):
 
 def run_discovery_pilot(
     rows: Sequence[CatalogInputRow],
-    policy_for_row: Callable[[CatalogInputRow], ManufacturerSourcePolicy | None],
-    search_provider: SourceSearchProvider,
-    enrichment_provider: ManufacturerEnrichmentProvider,
+    policy_for_row: Callable[[CatalogInputRow], ManufacturerSourcePolicy | None] | None = None,
+    search_provider: SourceSearchProvider | None = None,
+    enrichment_provider: ManufacturerEnrichmentProvider | None = None,
 ) -> list[DiscoveryPilotRowResult]:
     """Run discovery for caller-selected rows only.
 
     This helper never reads the expected-output CSV and never expands the
     caller's row selection. A missing policy is an explicit pilot failure.
     """
+    if search_provider is None or enrichment_provider is None:
+        raise ValueError("A search provider and enrichment provider are required.")
+    if policy_for_row is None:
+        from .pilot_policies import get_pilot_source_policy
+
+        policy_for_row = get_pilot_source_policy
+
     reports: list[DiscoveryPilotRowResult] = []
     for row in rows:
         policy = policy_for_row(row)

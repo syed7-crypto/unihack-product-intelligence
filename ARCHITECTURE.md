@@ -64,7 +64,8 @@ The current catalogue implementation has generic single-row enrichment plus dete
 - `confidence_scoring.py`: bounded explainable confidence.
 - `pipeline.py`: document orchestrator and `ProductIntelligenceResult`.
 - `manufacturer_enrichment.py`: approved-domain retrieval, exact MPN verification, and web/PDF conversion.
-- `source_discovery.py`: deterministic queries, the Brave search adapter, untrusted candidates, explicit policy filtering, selected-row pilot diagnostics, and discovery-to-verification diagnostics.
+- `source_discovery.py`: deterministic queries, Brave and Serper search adapters, untrusted candidates, explicit policy filtering, selected-row pilot diagnostics, and discovery-to-verification diagnostics.
+- `pilot_policies.py`: small, manually verified pilot-domain policies only; unknown manufacturers return no policy.
 - `reference_data.py`: deterministic reference interfaces; fixtures are mock/test data.
 - `catalog_input.py`, `delivery_schema.py`, `delivery_output.py`: catalogue and exact 252-column handling.
 - `catalogue_enrichment.py`: generic row orchestration and evaluation comparison.

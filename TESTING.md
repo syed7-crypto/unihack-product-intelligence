@@ -23,6 +23,8 @@ There are 100 passing tests at this checkpoint; the count may change as the proj
 - controlled manufacturer retrieval, allowlists, exact MPN verification, and web/PDF normalization
 - governed source discovery, policy filtering, candidate deduplication, and discovery-to-verification boundaries
 - mocked Brave provider configuration, response normalization, malformed/rate-limited responses, and missing-key behavior
+- mocked Serper provider configuration, organic-result parsing, URL normalization, malformed/rate-limited responses, and missing-key behavior
+- pilot policy lookup, exact configured domains, missing-policy behavior, and exact-MPN rejection through pilot policies
 - catalogue CSV input and six-field preservation
 - exact 252-column delivery schema and comparison
 - controlled reference resolution and no silent fallback
@@ -35,4 +37,4 @@ Tests use local controlled product, catalogue, delivery, and mock-reference fixt
 
 Future work includes scale tests for bulk processing, official reference-data integration tests, and additional approved manufacturer domains.
 
-The real Brave provider is not called by the normal suite. A real pilot requires `BRAVE_SEARCH_API_KEY` and an explicitly selected row list; it must not be run against all 1,000 rows as part of ordinary testing.
+The real Brave and Serper providers are not called by the normal suite. A real pilot requires the selected provider's API key and an explicitly selected row list; it must not be run against all 1,000 rows as part of ordinary testing.
