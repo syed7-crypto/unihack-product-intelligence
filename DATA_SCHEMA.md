@@ -1,181 +1,43 @@
 # Data Schema
 
-## Design Goal
+This document describes the implemented Pydantic models and catalogue structures. Accepted values are source-backed unless explicitly marked missing or under review.
 
-The output schema must support different product types without forcing every product into the same fixed set of fields.
+## Source and product models
 
-The schema must also clearly distinguish between:
+`NormalizedSource` contains a source identifier, source type, source name, extracted text, and source locations. Current types include `txt`, `json`, `pdf`, and controlled manufacturer `web` sources.
 
-- extracted or source-confirmed information
-- inferred information
-- suggested or enriched information
-- information that requires review
+`ProductIdentificationResult` contains `product_type`, `product_category`, and `attributes`. Each `AttributeDefinition` contains `name`, `label`, `data_type`, optional `unit`, `required`, and `description`; it defines relevant attributes and does not contain values.
 
-## Core Idea
+`AttributeEvidence` contains `source_id`, `source_name`, optional `location`, and `quote`.
 
-Each product should have:
+`ExtractedAttribute` contains `name`, optional `value`, `status` (`found` or `not_found`), and optional `evidence`. Found values require evidence; not-found values contain neither value nor evidence.
 
-- identity information
-- a product category
-- a dynamic list of relevant attributes
-- values for attributes
-- evidence for values
-- confidence for values
-- missing attributes
-- conflicts when sources disagree
+`AttributeExtractionResult` contains the extracted attribute list for one normalized source.
 
-## Suggested JSON Structure
+`CrossSourceValidationResult` contains `ValidatedAttribute` entries with `name`, source-preserving `values`, `status`, and optional conflict information. Status is `consistent`, `conflict`, `single_source`, or `not_found`. Each source value retains its original value and evidence.
 
-```json
-{
-  "product_id": "string",
-  "product_name": "string",
-  "product_category": "string",
-  "product_type_status": "identified|uncertain",
-  "source_summary": [
-    {
-      "source_id": "string",
-      "source_type": "pdf|txt|json",
-      "source_name": "string"
-    }
-  ],
-  "schema": {
-    "attributes": [
-      {
-        "name": "pressure_rating",
-        "label": "Pressure Rating",
-        "type": "number|string|boolean|enum",
-        "unit": "psi",
-        "required": true,
-        "description": "string"
-      }
-    ]
-  },
-  "attributes": {
-    "pressure_rating": {
-      "value": 150,
-      "unit": "psi",
-      "value_status": "source_confirmed|inferred|suggested|needs_review",
-      "confidence": 0.94,
-      "confidence_basis": "evidence_and_validation_summary",
-      "evidence": [
-        {
-          "source_id": "source_1",
-          "location": "page 3",
-          "quote": "150 PSI",
-          "evidence_type": "direct|indirect"
-        }
-      ]
-    }
-  },
-  "missing_attributes": [
-    {
-      "name": "temperature_range",
-      "label": "Temperature Range",
-      "reason": "Not found in available sources"
-    }
-  ],
-  "conflicts": [
-    {
-      "attribute": "pressure_rating",
-      "status": "needs_verification",
-      "values": [
-        {
-          "source_id": "source_1",
-          "value": 150
-        },
-        {
-          "source_id": "source_2",
-          "value": 120
-        }
-      ]
-    }
-  ],
-  "notes": ["string"]
-}
-```
+`ConfidenceScoringResult` contains `ConfidenceAssessment` entries with `name`, bounded `score`, `level` (`high`, `medium`, `low`), and human-readable `reasons`. Scores are calculated in Python.
 
-## Dynamic Attribute Model
+`ProductIntelligenceResult` contains `sources`, `product_identification`, `dynamic_attribute_schema`, `extracted_attributes`, `validation`, and `confidence`.
 
-The schema section should be generated for each product type.
+## Catalogue models
 
-Example:
+`CatalogInputRow` represents exactly: `Mfg_Part_Num`, `Part_Desc`, `E1_Brand`, `Unilog_Brand`, `DIB_Brand`, and `Part_Manuf`. Raw values are preserved. `Part_Manuf` is not blindly copied into `MANUFACTURER_NAME`.
 
-- Pen: ink color, tip size, ink type, body material, refillable
-- SSD: capacity, interface, form factor, read speed, write speed, NAND type
-- Industrial valve: valve type, pressure rating, connection type, material, temperature range
+`DeliverySchema` loads the ordered header from the supplied expected-output CSV and enforces exactly 252 unique columns. Delivery rows are exact ordered mappings validated against that schema.
 
-This is the main difference between product intelligence and a basic fixed-form extractor.
+`CatalogueEnrichmentResult` contains `catalogue_row`, optional `pipeline_result`, `delivery_row`, `source_diagnostics`, `reference_resolution`, `mapping_diagnostics`, optional `evaluation_comparison`, and `review`.
 
-## Evidence Representation
+`EvaluationComparison` and `EvaluationFieldDifference` compare generated output with a known-good row. Expected values are evaluation diagnostics only, never evidence.
 
-Evidence should show where a value came from.
+## Review models
 
-For the MVP, evidence may include:
+`ReviewIssue` contains `code`, `severity`, `scope`, `message`, optional `attribute_name`, `source_id`, `source_name`, `current_value`, and `affects_delivery`. Scope is `row`, `attribute`, `source`, or `evaluation`; severity is `info`, `warning`, `blocking`, or `error`.
 
-- source id
-- filename
-- page number if available
-- short supporting quote
+`ReviewReport` contains `status` and `issues`. Status is `ready`, `needs_review`, `blocked`, or `failed`. It is diagnostic and does not repair or approve unsupported values.
 
-The MVP should prefer direct source-confirmed evidence whenever possible.
+## Controlled references
 
-## Confidence Representation
+`ReferenceResolutionResult` contains `input_value`, `resolved_value`, `status`, `reference_type`, and `reason`. Resolution uses exact or case/whitespace-normalized matching only. Official UniHack reference masters are not present; test fixtures are explicitly mock data.
 
-Confidence should be a number between 0 and 1, but it should not be treated as a random LLM-generated score.
-
-For the MVP, confidence should be simple and explainable. It can be based on a small set of signals such as:
-
-- evidence availability
-- source agreement
-- validation results
-- direct versus indirect evidence
-- uncertainty or missing data
-
-Suggested meaning:
-
-- 0.90 to 1.00: very strong evidence and agreement
-- 0.70 to 0.89: likely correct but should be reviewed
-- below 0.70: weak or uncertain
-
-Suggested MVP approach:
-
-- start from a base score
-- increase the score when multiple sources agree
-- decrease the score when validation fails or evidence is weak
-- lower the score when the value is inferred instead of source-confirmed
-
-## Conflict Representation
-
-When multiple sources disagree, the output should not hide the problem.
-
-A conflict object should include:
-
-- attribute name
-- values from each source
-- conflict status
-- verification note
-
-## Missing Attribute Representation
-
-Missing attributes should appear explicitly so the demo shows completeness awareness.
-
-Each missing attribute should include:
-
-- attribute name
-- human-readable label
-- optional reason
-
-## Notes on Enrichment
-
-If the system suggests a likely value, it should be marked as inferred or suggested, not confirmed.
-
-Suggested or enriched information should be clearly separated from source-confirmed information so the user can see what came from the document and what was added by the system.
-
-## MVP Rule
-
-The schema should be strict enough for reliable JSON output but flexible enough to change by product type.
-
-## Future Extensions
-
-CSV and URL inputs may be added later, but they are future extensions, not MVP inputs. The MVP input set should remain PDF, TXT, and JSON.
+Bulk 1000-row result models and production persistence are future work.

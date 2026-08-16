@@ -1,111 +1,40 @@
 # AI Pipeline
 
-## Goal
+The AI boundary is intentionally narrow. Gemini proposes structured product information; deterministic Python decides whether the proposal is admissible.
 
-The AI layer should not generate free-form text. It should return structured data that can be validated and exported.
+## Gemini stages
 
-## Where the LLM Fits
+1. Product identification and dynamic attribute-schema generation.
+2. Attribute-value extraction for each `NormalizedSource`.
 
-The LLM will be used for tasks that are hard to do reliably with simple rules alone:
+Product identification defines relevant attributes but does not extract their values. Attribute extraction is a separate stage.
 
-- identifying the product category
-- mapping text to the correct attribute schema
-- extracting attributes from messy source content
-- helping judge ambiguous missing or conflicting information
+## Evidence firewall
 
-## What Should Stay Deterministic
+Prompts require only supplied source information, no outside knowledge or guessing, `not_found` when evidence is absent, and evidence for every `found` value.
 
-These parts should be handled by Python rules where possible:
+Python validates every found value:
 
-- file parsing
-- text normalization
-- simple unit or number checks
-- duplicate value detection
-- obvious conflict detection across sources
-- schema formatting
+- evidence exists;
+- `source_id` and `source_name` match the supplied source;
+- an optional location exists in known source locations;
+- the quote occurs in extracted source text using safe case/whitespace normalization;
+- the proposed value occurs in the supporting quote using the same normalization.
 
-This reduces hallucination risk and makes the system more predictable.
+Malformed or unsupported combinations raise existing extraction/pipeline errors. The system fails closed.
 
-## Recommended AI Flow
+## Deterministic stages
 
-1. Collect normalized source text and metadata.
-2. Ask the model to identify the product type.
-3. Ask the model to produce a dynamic attribute schema for that product type.
-4. Ask the model to extract values into the schema.
-5. Ask the model to return evidence references for each extracted value when possible.
-6. Run validation checks in Python.
-7. Mark conflicts, missing fields, and low-confidence fields.
-8. Return the final JSON structure.
+Python performs parsing, Pydantic validation, evidence checks, cross-source comparison, supported unit normalization, confidence scoring, reference/UOM/mapping checks, review issue creation, and delivery gating.
 
-## Prompt Strategy
+Gemini is not asked to decide conflicts or generate confidence. Conflicting values and their evidence remain preserved; no winner is selected.
 
-The prompts should be short, precise, and structured.
+## Catalogue boundary
 
-Important rules for prompts:
+Catalogue enrichment accepts explicitly supplied approved manufacturer URLs/domains. The provider verifies the exact MPN before converting a web page or PDF to `NormalizedSource`. It performs no unrestricted discovery, fuzzy matching, or automatic cross-reference.
 
-- provide a clear task
-- give source text in a bounded format
-- tell the model to return JSON only
-- define the expected schema
-- instruct the model not to guess when evidence is missing
-- ask it to mark uncertain values instead of inventing them
+Delivery also requires controlled reference and attribute/UOM mapping approval. Repository reference fixtures are mock data because official UniHack masters are unavailable.
 
-## Structured Output Format
+## Failure behavior
 
-The LLM should return data in a predictable JSON structure such as:
-
-- product name
-- product category
-- attributes list
-- evidence references
-- confidence value per field
-- notes about uncertainty
-
-The exact schema should be defined in DATA_SCHEMA.md.
-
-## Validation Approach
-
-After the model returns output, validate it in Python.
-
-Examples:
-
-- if two sources say different values for the same attribute, flag a conflict
-- if a value does not match the expected type, flag it
-- if the model invents an attribute not relevant to the product type, reject or review it
-- if the model provides a value with no evidence, lower the confidence
-
-## Confidence Approach
-
-Confidence should not be a random number. It should be based on signals such as:
-
-- whether the value appears in one source or several sources
-- whether evidence is directly quoted or implied
-- whether sources agree
-- whether the value passed validation checks
-- whether the model marked it as certain or uncertain
-
-A simple scoring scale is enough for the MVP.
-
-## Hallucination and Reliability Mitigation
-
-To keep the MVP trustworthy:
-
-- prefer structured prompts over open-ended prompts
-- keep extraction tied to source text
-- require evidence references where possible
-- let Python handle obvious checks
-- do not force a value when the source does not support it
-- separate extracted facts from inferred/enriched facts
-
-## Enrichment Guidance
-
-If enrichment is used, it should be clearly labeled as inferred or suggested, not treated as source-confirmed truth.
-
-## MVP Recommendation
-
-For the first version, use one LLM call for category + schema + extraction only if it stays reliable. If that becomes too messy, split it into two simpler steps:
-
-- step 1: identify product type and relevant schema
-- step 2: extract attributes into the schema
-
-That split is often easier for a beginner team to debug.
+Missing or invalid evidence fails closed. Conflicts remain visible and score low. Missing, unresolved, blocked, or review attributes are not mapped into delivery fields. Review diagnostics do not repair or approve values.

@@ -1,84 +1,61 @@
-# TODO
+# Living Backlog
 
-## Legend
+Completed MVP work is recorded so the backlog does not present implemented features as unfinished.
 
-- Status: TODO / IN PROGRESS / DONE
-- Priority: MUST / SHOULD / COULD
+## Completed MVP
 
-## Phase 1: MVP Foundation
+- [DONE] TXT/JSON/PDF extraction and `NormalizedSource`
+- [DONE] Product identification and dynamic attribute schema
+- [DONE] Evidence-backed extraction and hallucination firewall
+- [DONE] Cross-source validation and deterministic unit normalization
+- [DONE] Explainable confidence scoring
+- [DONE] Streamlit document UI and JSON export
+- [DONE] Catalogue input adapter and six-field preservation
+- [DONE] Exact 252-column delivery schema and comparison
+- [DONE] Controlled reference-resolution interfaces
+- [DONE] Controlled manufacturer retrieval and exact MPN verification
+- [DONE] Generic single-row catalogue enrichment
+- [DONE] Unified review/exception layer and delivery gating
 
-| Status | Priority | Task                                |
-| ------ | -------- | ----------------------------------- |
-| TODO   | MUST     | Freeze MVP scope                    |
-| TODO   | MUST     | Prepare sample product data         |
-| TODO   | MUST     | Build PDF/TXT/JSON extraction       |
-| TODO   | MUST     | Normalize extracted source data     |
-| TODO   | MUST     | Define final product JSON schema    |
-| TODO   | MUST     | Product/category identification     |
-| TODO   | MUST     | Dynamic attribute schema generation |
-| TODO   | MUST     | AI structured attribute extraction  |
-| TODO   | MUST     | Missing attribute detection         |
-| TODO   | MUST     | Conflict detection                  |
-| TODO   | MUST     | Deterministic validation            |
-| TODO   | MUST     | Confidence calculation              |
-| TODO   | MUST     | Evidence/source tracking            |
-| TODO   | MUST     | Basic Streamlit UI                  |
-| TODO   | MUST     | JSON export                         |
-| TODO   | MUST     | End-to-end testing                  |
+## Current/next priority
 
-## Phase 2: Nice to Have
+- [TODO] Design safe full-1000-row batch orchestration.
+- [TODO] Add resumability, per-row error isolation, aggregate reporting, and performance tests.
 
-| Status | Priority | Task                                        |
-| ------ | -------- | ------------------------------------------- |
-| TODO   | SHOULD   | Improve UI layout and result presentation   |
-| TODO   | SHOULD   | Add clearer error messages and input checks |
-| TODO   | SHOULD   | Add Excel/CSV input                         |
-| TODO   | SHOULD   | Add URL input                               |
-| TODO   | SHOULD   | Add simple product comparison               |
-| TODO   | SHOULD   | Add batch processing for multiple files     |
+## Reference data
 
-## Phase 3: Stretch Goals
+- [TODO] Obtain and ingest official UniHack manufacturer and brand masters.
+- [TODO] Obtain and ingest official taxonomy, attribute/LOV, and UOM masters.
+- [TODO] Replace mock fixtures only after official data contracts are available.
 
-| Status | Priority | Task                                 |
-| ------ | -------- | ------------------------------------ |
-| TODO   | COULD    | Add OCR/image extraction             |
-| TODO   | COULD    | Add large catalog processing support |
-| TODO   | COULD    | Add cloud deployment                 |
-| TODO   | COULD    | Add advanced analytics               |
-| TODO   | COULD    | Add RAG or a vector database         |
-| TODO   | COULD    | Add authentication                   |
+## Source discovery and enrichment
 
-## Implementation Phases
+- [TODO] Define governed discovery with explicit allowlists.
+- [TODO] Add an authoritative manufacturer cross-reference provider.
+- [TODO] Expand approved manufacturer domains through tested configuration.
+- [TODO] Preserve exact MPN verification and the evidence firewall.
 
-### Phase A: Scope and Data
+## Evaluation
 
-1. Freeze scope.
-2. Choose the 2 to 3 product categories for the demo.
-3. Prepare sample files for those categories.
+- [TODO] Build repeatable reports over known-good rows.
+- [TODO] Separate coverage, review rate, mapping accuracy, and field-level differences.
+- [TODO] Add regression fixtures for more product categories.
 
-### Phase B: Extraction and Schema
+## UI/demo
 
-4. Build PDF/TXT/JSON extraction.
-5. Normalize all extracted content.
-6. Define the final product JSON schema.
-7. Implement product/category identification.
-8. Generate the dynamic attribute schema.
+- [TODO] Add a catalogue-row review experience after the backend batch contract is stable.
+- [TODO] Expose review issues and evaluation diagnostics in a future UI.
+- [TODO] Keep the current document UI unchanged until catalogue UI requirements are defined.
 
-### Phase C: Intelligence and Validation
+## Production/future
 
-9. Add AI structured extraction.
-10. Add missing attribute detection.
-11. Add conflict detection.
-12. Add deterministic validation.
-13. Add confidence calculation.
-14. Add evidence/source tracking.
+- [TODO] Production persistence and audit storage.
+- [TODO] Authentication, authorization, and multi-tenant controls.
+- [TODO] Cloud deployment and monitoring.
+- [TODO] OCR/image processing.
+- [TODO] RAG or graph-backed retrieval only if a later requirement justifies it.
+- [TODO] Advanced analytics and product comparison.
 
-### Phase D: Demo and Testing
+## Explicitly out of scope now
 
-15. Build the basic Streamlit UI.
-16. Add JSON export.
-17. Run end-to-end testing.
-
-## Notes
-
-The MVP should stay small and believable. Anything that does not clearly improve product intelligence or the demo should stay out of the first version.
+Unrestricted web search, fuzzy manufacturer/MPN matching, automatic identifier guessing, unsupported value generation, and treating expected-output rows as evidence.

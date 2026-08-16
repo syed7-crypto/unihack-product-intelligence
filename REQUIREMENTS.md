@@ -1,86 +1,37 @@
-# Requirements
+# Requirements and Scope
 
-## Functional Requirements
+## Implemented document intelligence
 
-### Input Handling
+- TXT, JSON, and PDF sources, including multiple sources for one product.
+- Normalized source metadata, text, and locations.
+- Product/category identification and dynamic attribute schema generation.
+- Structured attribute extraction with source evidence.
+- Deterministic evidence validation and fail-closed missing-value behavior.
+- Missing attributes, cross-source conflicts, safe unit comparison, and explainable confidence.
+- Structured JSON output and a document-oriented Streamlit UI.
 
-- Accept PDF files in the MVP
-- Accept TXT files in the MVP
-- Accept JSON files in the MVP
-- Support multiple sources for the same product when available
+## Implemented catalogue vertical slice
 
-### Extraction
+- Six-field CSV input through `CatalogInputRow`.
+- Controlled manufacturer and brand/reference resolution.
+- Explicit approved manufacturer URLs/domains and exact MPN verification.
+- Web/PDF normalization into the existing pipeline.
+- Evidence-backed controlled attribute/UOM mapping.
+- Exact 252-column delivery output.
+- Evaluation-only comparison with known-good rows.
+- Typed review issues and delivery gating.
 
-- Extract text or structured content from each input file
-- Preserve source metadata such as filename and page number when possible
+## Safety requirements
 
-### Product Intelligence
+Unsupported AI-generated values must not enter accepted extraction or delivery. Conflicts must not be silently resolved. Manufacturer, brand, taxonomy, attribute, value, and UOM fields must not be guessed when controlled approval is required. Raw catalogue fields remain preserved even when enrichment is blocked.
 
-- Identify the product or product category from the input
-- Decide which attributes are relevant for that product type
-- Extract the relevant attributes into a structured format
-- Detect missing attributes for that product type
-- Detect conflicting values across sources
-- Produce a confidence score for extracted values
-- Attach evidence or source references to extracted values when possible
+## Not implemented
 
-### Output
+- Full 1000-row batch execution and catalogue-scale orchestration.
+- Unrestricted automatic source discovery.
+- Authoritative manufacturer cross-reference service.
+- Official UniHack manufacturer, brand, taxonomy, attribute/LOV, or UOM master ingestion.
+- Production persistence, cloud deployment, authentication, and multi-tenant management.
+- OCR/image processing, RAG, graph databases, advanced analytics, or a catalogue-management UI.
 
-- Generate structured JSON output
-- Show the extracted result in a simple UI
-- Allow JSON export
-
-## Non-Functional Requirements
-
-- The MVP should be easy to understand for a beginner team
-- The system should be simple enough to build before exams
-- The pipeline should be modular so later features can be added safely
-- The AI output should be structured and machine-readable
-- The system should be reliable enough to demonstrate on sample products
-- The solution should work on local development machines first
-
-## MVP Requirements
-
-These are the minimum requirements for a strong hackathon demo.
-
-- PDF, TXT, and JSON input
-- Text extraction
-- Product/category identification
-- Dynamic attribute generation
-- AI attribute extraction
-- Missing attribute detection
-- Basic validation
-- Conflict detection
-- Confidence scores
-- Evidence/source references
-- Structured JSON output
-- Simple dashboard or viewer
-
-## Future Requirements
-
-These can be added only if time remains.
-
-- Excel/CSV input
-- URL input
-- Image/OCR input
-- Batch processing
-- More advanced validation
-- Product comparison
-- Better frontend
-- Cloud deployment
-- Authentication
-
-## Out-of-Scope Features for MVP
-
-- Full production-grade catalog management
-- Large-scale multi-tenant system
-- OCR and image-heavy pipelines
-- Vector database or RAG-based retrieval layer
-- Advanced analytics dashboards
-- Complex role-based access control
-- Mobile app
-- Heavy frontend engineering
-
-## Requirement Notes
-
-The most important product rule is that the system must understand the product type first and then generate the right attribute schema. A single fixed schema for all products would be too weak for this problem.
+The MVP is local-first, modular, and designed for a focused hackathon demonstration.
