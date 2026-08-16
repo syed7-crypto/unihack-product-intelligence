@@ -453,9 +453,9 @@ def run_discovery_pilot(
     if search_provider is None or enrichment_provider is None:
         raise ValueError("A search provider and enrichment provider are required.")
     if policy_for_row is None:
-        from .pilot_policies import get_pilot_source_policy
+        from .pilot_policies import resolve_source_policy_for_row
 
-        policy_for_row = get_pilot_source_policy
+        policy_for_row = resolve_source_policy_for_row
 
     reports: list[DiscoveryPilotRowResult] = []
     for row in rows:

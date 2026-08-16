@@ -115,7 +115,13 @@ from .source_discovery import (
     generate_discovery_queries,
     run_discovery_pilot,
 )
-from .pilot_policies import get_pilot_source_policy
+from .pilot_policies import (
+    ControlledSourcePolicy,
+    get_controlled_source_policy,
+    get_pilot_source_policy,
+    resolve_source_policy,
+    resolve_source_policy_for_row,
+)
 
 __all__ = [
     "AttributeEvidence",
@@ -206,4 +212,8 @@ __all__ = [
     "generate_discovery_queries",
     "run_discovery_pilot",
     "get_pilot_source_policy",
+    "ControlledSourcePolicy",
+    "get_controlled_source_policy",
+    "resolve_source_policy",
+    "resolve_source_policy_for_row",
 ]

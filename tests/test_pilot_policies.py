@@ -6,6 +6,12 @@ from src.product_intelligence.manufacturer_enrichment import (
     RetrievedPayload,
 )
 from src.product_intelligence.pilot_policies import get_pilot_source_policy
+from src.product_intelligence.pilot_policies import (
+    get_controlled_source_policy,
+    resolve_source_policy,
+    resolve_source_policy_for_row,
+)
+from src.product_intelligence.reference_data import BrandReference, ManufacturerReference
 from src.product_intelligence.source_discovery import (
     InMemorySourceSearchProvider,
     ManufacturerSourcePolicy,
@@ -27,6 +33,91 @@ def row(mpn: str) -> CatalogInputRow:
 
 
 class PilotPolicyTests(unittest.TestCase):
+    def test_manufacturer_policy_resolves_by_controlled_identity(self) -> None:
+        policy = resolve_source_policy(manufacturer_identity="frigidaire")
+        self.assertIsNotNone(policy)
+        self.assertEqual(policy.manufacturer_name, "Frigidaire")
+
+    def test_brand_policy_resolves_by_controlled_identity(self) -> None:
+        policy = resolve_source_policy(brand_identity="dewalt")
+        self.assertIsNotNone(policy)
+        self.assertEqual(policy.manufacturer_name, "DEWALT")
+
+    def test_manufacturer_identity_takes_precedence_over_brand_identity(self) -> None:
+        policy = resolve_source_policy(
+            manufacturer_identity="Frigidaire",
+            brand_identity="DEWALT",
+        )
+        self.assertIsNotNone(policy)
+        self.assertEqual(policy.manufacturer_name, "Frigidaire")
+
+    def test_unknown_controlled_identity_is_unresolved(self) -> None:
+        self.assertIsNone(resolve_source_policy(manufacturer_identity="Unknown Corp"))
+        self.assertIsNone(resolve_source_policy(brand_identity="Unknown Brand"))
+
+    def test_distributor_like_raw_manufacturer_is_not_trusted(self) -> None:
+        self.assertIsNone(resolve_source_policy_for_row(row("NEW-PRODUCT")))
+
+    def test_controlled_policy_contains_governance_metadata_only(self) -> None:
+        policy = get_controlled_source_policy("Trex", "brand")
+        self.assertIsNotNone(policy)
+        assert policy is not None
+        self.assertEqual(policy.controlled_identity, "Trex")
+        self.assertEqual(policy.identity_kind, "brand")
+        self.assertTrue(policy.governance_reason)
+        serialized = policy.model_dump_json().casefold()
+        self.assertNotIn("attribute_value", serialized)
+        self.assertNotIn("delivery", serialized)
+        self.assertNotIn("expected", serialized)
+
+    def test_controlled_references_enable_generic_row_resolution(self) -> None:
+        candidate = CatalogInputRow(
+            Mfg_Part_Num="NEW-DEWALT-PRODUCT",
+            Part_Desc="controlled fixture",
+            E1_Brand="DEWALT",
+            Unilog_Brand="",
+            DIB_Brand="",
+            Part_Manuf="unresolved catalogue distributor",
+        )
+        policy = resolve_source_policy_for_row(
+            candidate,
+            brand_reference=BrandReference(["DEWALT"]),
+        )
+        self.assertIsNotNone(policy)
+        self.assertEqual(policy.manufacturer_name, "DEWALT")
+
+    def test_six_pilot_products_resolve_through_compatibility_path(self) -> None:
+        expected = {
+            "PDSH4816AF": "Frigidaire",
+            "59210": "Hunter",
+            "S03-05226-IS": "Leviton",
+            "KDFM404KPS": "KitchenAid",
+            "DWST41092": "DEWALT",
+            "543302126": "Trex",
+        }
+        for mpn, manufacturer in expected.items():
+            with self.subTest(mpn=mpn):
+                policy = resolve_source_policy_for_row(row(mpn))
+                self.assertIsNotNone(policy)
+                self.assertEqual(policy.manufacturer_name, manufacturer)
+
+    def test_controlled_manufacturer_reference_has_priority_over_brand_reference(self) -> None:
+        candidate = CatalogInputRow(
+            Mfg_Part_Num="NEW-PRODUCT",
+            Part_Desc="controlled fixture",
+            E1_Brand="DEWALT",
+            Unilog_Brand="",
+            DIB_Brand="",
+            Part_Manuf="Frigidaire",
+        )
+        policy = resolve_source_policy_for_row(
+            candidate,
+            manufacturer_reference=ManufacturerReference(["Frigidaire"]),
+            brand_reference=BrandReference(["DEWALT"]),
+        )
+        self.assertIsNotNone(policy)
+        self.assertEqual(policy.manufacturer_name, "Frigidaire")
+
     def test_three_selected_products_receive_expected_pilot_policies(self) -> None:
         frigidaire = get_pilot_source_policy("PDSH4816AF")
         hunter = get_pilot_source_policy("59210")

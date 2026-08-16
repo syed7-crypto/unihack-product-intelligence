@@ -32,9 +32,11 @@ Gemini is used for product identification/schema generation and source-backed va
 
 ```text
 CatalogInputRow from CSV
-        ↓
+          ↓
 Controlled manufacturer/brand/reference resolution
-        ↓
+          ↓
+Controlled manufacturer/brand policy resolution
+          ↓
 Governed candidate discovery / explicit approved URLs
         ↓
 Exact MPN verification
@@ -65,13 +67,21 @@ The current catalogue implementation has generic single-row enrichment plus dete
 - `pipeline.py`: document orchestrator and `ProductIntelligenceResult`.
 - `manufacturer_enrichment.py`: approved-domain retrieval, exact MPN verification, and web/PDF conversion.
 - `source_discovery.py`: deterministic queries, Brave and Serper search adapters, untrusted candidates, explicit policy filtering, selected-row pilot diagnostics, and discovery-to-verification diagnostics.
-- `pilot_policies.py`: small, manually verified pilot-domain policies only; unknown manufacturers return no policy.
+- `pilot_policies.py`: controlled manufacturer/brand governance policies with approved domains and reasons; raw
+  `Part_Manuf` may be a distributor, so unresolved identities return no policy. The six original MPN entries are
+  compatibility fixtures only; new products are resolved by controlled identity.
 - `reference_data.py`: deterministic reference interfaces; fixtures are mock/test data.
 - `catalog_input.py`, `delivery_schema.py`, `delivery_output.py`: catalogue and exact 252-column handling.
 - `catalogue_enrichment.py`: generic row orchestration and evaluation comparison.
 - `catalogue_batch.py`: ordered batch orchestration, failure isolation, safe delivery aggregation, and summary counts.
 - `review.py`: typed review issues, statuses, and delivery gating.
 - `ui.py` and `app.py`: document-oriented Streamlit MVP.
+
+## Policy boundary
+
+Policies are governance configuration, not product-specific application logic. They contain only controlled
+manufacturer/brand identity, approved HTTPS domains, and governance metadata. They contain no attributes, delivery
+values, or expected-output values. Raw manufacturer/brand text and search results never create trusted policies.
 
 ## Safety boundaries
 

@@ -6,7 +6,7 @@ UniHack Product Intelligence turns limited product documents or a catalogue row 
 
 Document intelligence includes TXT, JSON, and selectable-text PDF extraction into `NormalizedSource`, Gemini product identification and dynamic schemas, evidence-backed value extraction, the deterministic evidence firewall, cross-source validation, safe unit normalization, and explainable confidence scoring.
 
-The catalogue workflow includes typed CSV input, controlled manufacturer/brand/reference resolution, a small manually verified pilot-domain registry, governed candidate discovery under an explicit domain policy, provider-neutral Brave and Serper Web Search API adapters, exact MPN verification, web/PDF normalization, generic single-row enrichment, safe row-isolated batch orchestration, the exact 252-column delivery schema, controlled attribute mapping, evaluation-only comparison, and the unified review/exception layer.
+The catalogue workflow includes typed CSV input, controlled manufacturer/brand/reference resolution, a small manually verified manufacturer/brand governance-policy registry, governed candidate discovery under an explicit domain policy, provider-neutral Brave and Serper Web Search API adapters, exact MPN verification, web/PDF normalization, generic single-row enrichment, safe row-isolated batch orchestration, the exact 252-column delivery schema, controlled attribute mapping, evaluation-only comparison, and the unified review/exception layer.
 
 Reference fixtures are mock/test data. No official UniHack reference masters are present in the repository.
 
@@ -16,7 +16,7 @@ Reference fixtures are mock/test data. No official UniHack reference masters are
 Document files → normalize → identify product/schema → extract values
                → evidence firewall → validate → confidence
 
-Catalogue row → controlled references → approved URLs → exact MPN
+Catalogue row → controlled references → manufacturer/brand policy → approved URLs → exact MPN
               → normalize sources → existing document pipeline
               → controlled mapping → review gate → 252-column row
 ```
@@ -36,8 +36,12 @@ Gemini must use only supplied source text. Found values require matching source 
 - No unrestricted discovery, automatic batch searching, fuzzy manufacturer/MPN matching, or automatic cross-reference provider. Discovery candidates remain untrusted until the provider verifies them.
 - Real discovery requires `BRAVE_SEARCH_API_KEY`; missing configuration fails explicitly and never falls back to fake results.
 - Serper is an alternative configured provider using `SERPER_API_KEY`; the caller chooses the provider.
-- The pilot registry is not official UniHack reference data and does not cover all catalogue manufacturers.
-- Batch orchestration is implemented, but rows still require externally supplied source configuration; there is no automatic discovery for the full 1000-row catalogue.
+- The governance-policy registry is not official UniHack reference data and does not cover all catalogue manufacturers.
+- Catalogue `Part_Manuf` values may identify distributors or catalogue organizations rather than manufacturers. Raw
+  manufacturer or arbitrary brand text never creates a trusted policy; unresolved identities remain blocked/reviewed.
+- The six original pilot MPN fixtures remain as compatibility entries. New products resolve policies by controlled
+  manufacturer/brand identity, not by product-specific application branches.
+- Batch discovery is optional and policy-gated; there is no automatic discovery for the full 1000-row catalogue.
 - No RAG, graph database, OCR/image processing, production persistence, cloud deployment, or catalogue-management UI.
 
 ## Setup and usage

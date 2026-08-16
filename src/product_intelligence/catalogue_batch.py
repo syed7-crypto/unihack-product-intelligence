@@ -27,6 +27,7 @@ from .source_discovery import (
     SourceSearchProvider,
     discover_and_verify_sources,
 )
+from .pilot_policies import resolve_source_policy_for_row
 
 
 SourceURLResolver = Callable[[CatalogInputRow], Sequence[str]]
@@ -110,6 +111,8 @@ def run_catalogue_batch(
                     search_provider=search_provider,
                     enrichment_provider=provider,
                     policy_resolver=discovery_policy_resolver,
+                    manufacturer_reference=manufacturer_reference,
+                    brand_reference=brand_reference,
                     max_results_per_query=discovery_max_results_per_query,
                 )
                 result = enrich(
@@ -192,12 +195,20 @@ def _discover_for_row(
     search_provider: SourceSearchProvider | None,
     enrichment_provider: ManufacturerEnrichmentProvider | None,
     policy_resolver: DiscoveryPolicyResolver | None,
+    manufacturer_reference: ManufacturerReference | None,
+    brand_reference: BrandReference | None,
     max_results_per_query: int,
 ) -> _DiscoveryOutcome:
     """Run one governed discovery step and convert diagnostics for enrichment."""
-    from .pilot_policies import get_pilot_source_policy
-
-    policy = (policy_resolver or get_pilot_source_policy)(row)
+    policy = (
+        policy_resolver(row)
+        if policy_resolver is not None
+        else resolve_source_policy_for_row(
+            row,
+            manufacturer_reference=manufacturer_reference,
+            brand_reference=brand_reference,
+        )
+    )
     if policy is None:
         return _DiscoveryOutcome(
             diagnostics=[
