@@ -85,6 +85,11 @@ from .catalogue_enrichment import (
     MappingDiagnostic,
     enrich_catalogue_row,
 )
+from .review import (
+    ReviewIssue,
+    ReviewReport,
+    build_review_report,
+)
 
 __all__ = [
     "AttributeEvidence",
@@ -150,4 +155,7 @@ __all__ = [
     "EvaluationFieldDifference",
     "MappingDiagnostic",
     "enrich_catalogue_row",
+    "ReviewIssue",
+    "ReviewReport",
+    "build_review_report",
 ]

@@ -31,6 +31,7 @@ from .reference_data import (
     UOMReference,
     normalize_reference_value,
 )
+from .review import ReviewReport, build_review_report
 
 
 class AttributeDeliveryMapping(BaseModel):
@@ -113,6 +114,7 @@ class CatalogueEnrichmentResult(BaseModel):
     reference_resolution: CatalogReferenceResolution | None = None
     mapping_diagnostics: list[MappingDiagnostic] = Field(default_factory=list)
     evaluation_comparison: EvaluationComparison | None = None
+    review: ReviewReport = Field(default_factory=ReviewReport)
 
 
 class CatalogueEnrichmentError(RuntimeError):
@@ -220,7 +222,7 @@ def enrich_catalogue_row(
             EnrichmentSourceDiagnostic(
                 url=";".join(source_urls),
                 success=False,
-                error=f"Pipeline failed after source verification: {error}",
+                error=f"Pipeline failed after source verification: {_pipeline_error_message(error)}",
             )
         )
         return _finish_result(
@@ -331,6 +333,13 @@ def _map_validated_attributes(
         if attribute.status == "conflict":
             diagnostics.append(_skipped(mapping, "Conflicting source values require review."))
             continue
+        confidence = next(
+            (item for item in pipeline_result.confidence.attributes if item.name == attribute.name),
+            None,
+        )
+        if confidence is not None and confidence.level == "low":
+            diagnostics.append(_skipped(mapping, "Confidence is low; the attribute requires review."))
+            continue
         if not attribute.values:
             diagnostics.append(_skipped(mapping, "No validated source value was available."))
             continue
@@ -419,7 +428,7 @@ def _finish_result(
                 for difference in comparison.differences
             ],
         )
-    return CatalogueEnrichmentResult(
+    result = CatalogueEnrichmentResult(
         catalogue_row=row,
         pipeline_result=pipeline_result,
         delivery_row=schema.validate_row(delivery_row),
@@ -428,3 +437,23 @@ def _finish_result(
         mapping_diagnostics=mapping_diagnostics,
         evaluation_comparison=evaluation,
     )
+    result.review = build_review_report(
+        pipeline_result=pipeline_result,
+        source_diagnostics=source_diagnostics,
+        reference_resolution=reference_resolution,
+        mapping_diagnostics=mapping_diagnostics,
+        evaluation_comparison=evaluation,
+    )
+    return result
+
+
+def _pipeline_error_message(error: Exception) -> str:
+    """Retain useful nested validation context without changing firewall behavior."""
+    messages: list[str] = []
+    current: BaseException | None = error
+    while current is not None and len(messages) < 6:
+        message = str(current).strip()
+        if message and message not in messages:
+            messages.append(message)
+        current = current.__cause__ or current.__context__
+    return " | ".join(messages) or "Unexpected pipeline failure."
