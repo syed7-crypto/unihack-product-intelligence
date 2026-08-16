@@ -74,6 +74,17 @@ from .manufacturer_enrichment import (
     RetrievedPayload,
     RetrievalResult,
 )
+from .catalogue_enrichment import (
+    AttributeDeliveryMapping,
+    AttributeDeliveryMappings,
+    CatalogueEnrichmentError,
+    CatalogueEnrichmentResult,
+    EnrichmentSourceDiagnostic,
+    EvaluationComparison,
+    EvaluationFieldDifference,
+    MappingDiagnostic,
+    enrich_catalogue_row,
+)
 
 __all__ = [
     "AttributeEvidence",
@@ -130,4 +141,13 @@ __all__ = [
     "ManufacturerSource",
     "RetrievedPayload",
     "RetrievalResult",
+    "AttributeDeliveryMapping",
+    "AttributeDeliveryMappings",
+    "CatalogueEnrichmentError",
+    "CatalogueEnrichmentResult",
+    "EnrichmentSourceDiagnostic",
+    "EvaluationComparison",
+    "EvaluationFieldDifference",
+    "MappingDiagnostic",
+    "enrich_catalogue_row",
 ]
