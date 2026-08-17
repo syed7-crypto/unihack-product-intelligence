@@ -6,6 +6,7 @@ import unittest
 from src.product_intelligence.attribute_extraction import (
     AttributeExtractionError,
     AttributeExtractionResult,
+    GeminiAttributeExtractionResult,
     extract_attribute_values,
     normalize_location_label,
 )
@@ -131,9 +132,13 @@ class AttributeExtractionTests(unittest.TestCase):
             AttributeExtractionResult.model_validate({"attributes": [{**valid, "evidence": {"source_id": "x", "source_name": "x", "quote": "20 C"}}]})
 
     def test_gemini_schema_is_flat_and_has_no_union_keywords(self) -> None:
-        schema_text = json.dumps(AttributeExtractionResult.model_json_schema())
+        schema = GeminiAttributeExtractionResult.model_json_schema()
+        schema_text = json.dumps(schema)
         self.assertNotIn("discriminator", schema_text)
         self.assertNotIn("oneOf", schema_text)
+        required = schema["$defs"]["GeminiAttributeResponse"]["required"]
+        for key in ("name", "status", "value", "evidence"):
+            self.assertIn(key, required)
 
     def test_extraction_uses_flat_gemini_schema(self) -> None:
         response = {"attributes": [{"name": "material", "value": None, "status": "not_found", "evidence": None}]}
@@ -143,7 +148,7 @@ class AttributeExtractionTests(unittest.TestCase):
         )
         client = FakeGeminiClient(json.dumps(response))
         extract_attribute_values(source, schema, client)
-        self.assertIs(client.response_schema, AttributeExtractionResult)
+        self.assertIs(client.response_schema, GeminiAttributeExtractionResult)
 
     def test_value_not_supported_by_valid_quote_is_rejected(self) -> None:
         source = source_with_text("Material: Stainless Steel")

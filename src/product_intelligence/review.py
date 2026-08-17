@@ -151,10 +151,6 @@ def build_review_report(
             for item in mapping_diagnostics
             if getattr(item, "status", None) == "mapped"
         }
-        configured_names = {
-            str(getattr(item, "attribute_name"))
-            for item in mapping_diagnostics
-        }
         for attribute in pipeline_result.validation.attributes:
             if attribute.status == "conflict":
                 add(
@@ -193,20 +189,6 @@ def build_review_report(
                         affects_delivery=True,
                     )
                 )
-
-            if attribute.status in {"single_source", "consistent"} and attribute.values:
-                if attribute.name not in configured_names:
-                    add(
-                        ReviewIssue(
-                            code="ATTRIBUTE_MAPPING_MISSING",
-                            severity="blocking",
-                            scope="attribute",
-                            message="No controlled delivery mapping was configured.",
-                            attribute_name=attribute.name,
-                            current_value=attribute.values[0].value,
-                            affects_delivery=True,
-                        )
-                    )
 
         for diagnostic in mapping_diagnostics:
             if getattr(diagnostic, "status", None) != "skipped":
@@ -307,6 +289,8 @@ def _pipeline_error_code(error: str) -> str:
 
 def _mapping_issue_details(reason: str) -> tuple[str | None, ReviewSeverity]:
     lowered = reason.casefold()
+    if "attribute_slot_limit_exceeded" in lowered:
+        return "ATTRIBUTE_SLOT_LIMIT_EXCEEDED", "warning"
     if "conflicting" in lowered:
         return "ATTRIBUTE_CONFLICT", "blocking"
     if "uom" in lowered:

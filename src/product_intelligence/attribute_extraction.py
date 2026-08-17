@@ -66,6 +66,26 @@ class AttributeExtractionResult(BaseModel):
     rejected_attributes: list[RejectedAttribute] = Field(default_factory=list)
 
 
+class GeminiAttributeResponse(BaseModel):
+    """Flat Gemini-facing attribute shape with all response keys required."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    name: str = Field(min_length=1)
+    status: Literal["found", "not_found"]
+    value: str | None = Field(...)
+    evidence: AttributeEvidence | None = Field(...)
+
+
+class GeminiAttributeExtractionResult(BaseModel):
+    """Gemini-compatible response schema; semantic rules are checked afterward."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    attributes: list[GeminiAttributeResponse] = Field(min_length=1)
+    rejected_attributes: list[RejectedAttribute] = Field(default_factory=list)
+
+
 class AttributeExtractionError(RuntimeError):
     """Raised when Gemini output is malformed or unsupported by the source."""
 
@@ -97,9 +117,10 @@ def extract_attribute_values(
     try:
         raw_response = gemini_client.generate_structured_json(
             _build_prompt(source, product_identification),
-            AttributeExtractionResult,
+            GeminiAttributeExtractionResult,
         )
-        result = AttributeExtractionResult.model_validate_json(raw_response)
+        response = GeminiAttributeExtractionResult.model_validate_json(raw_response)
+        result = AttributeExtractionResult.model_validate(response.model_dump())
         _validate_against_input(result, source, product_identification)
         return result
     except ValidationError as error:
@@ -237,6 +258,7 @@ proof that the value occurs in the source.
     return f"""Extract actual product attribute values from the supplied source.
 
 Return only the structured JSON response requested by the response schema.
+Every attribute object MUST contain all four keys: name, status, value, evidence.
 Use only information present in the supplied source. Do not use outside knowledge.
 Do not guess, infer, enrich, or invent values. Return status \"not_found\" with
 value null and evidence null when an attribute is absent or unsupported.
@@ -244,7 +266,7 @@ Every \"found\" value MUST have evidence with the exact source_id and source_nam
 a short supporting quote copied from the source, and a source location when available.
 If status is \"found\", the value field MUST be present and non-null and evidence
 MUST be present. If status is \"not_found\", value MUST be present as null and
-evidence MUST be present as null.
+evidence MUST be present as null. Never omit the value or evidence keys.
 For PDF sources, preserve the page location whenever possible.
 {webpage_location_rules}
 

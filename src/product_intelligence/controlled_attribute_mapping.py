@@ -36,7 +36,10 @@ class ControlledAttributeMapping(BaseModel):
     data_type: str | None = None
     allowed_values_reference: str | None = None
     allowed_uom_reference: str | None = None
-    slot: int = Field(ge=1, le=50)
+    # Slots are retained as optional legacy metadata.  The MVP delivery
+    # exporter assigns slots sequentially; this field no longer governs
+    # delivery position.
+    slot: int | None = Field(default=None, ge=1, le=50)
     # Existing names remain supported by the enrichment mapper.
     reference_attribute: str | None = None
     expected_uom: str | None = None
@@ -83,7 +86,7 @@ class ControlledAttributeMappingRegistry(BaseModel):
 
     @model_validator(mode="after")
     def validate_mappings(self) -> "ControlledAttributeMappingRegistry":
-        slots = [mapping.slot for mapping in self.mappings]
+        slots = [mapping.slot for mapping in self.mappings if mapping.slot is not None]
         if len(slots) != len(set(slots)):
             raise ValueError("Delivery attribute slots must be unique.")
 

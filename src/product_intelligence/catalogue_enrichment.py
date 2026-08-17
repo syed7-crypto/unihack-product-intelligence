@@ -40,6 +40,7 @@ from .review import ReviewReport, build_review_report
 
 AttributeDeliveryMapping = ControlledAttributeMapping
 AttributeDeliveryMappings = ControlledAttributeMappingRegistry
+MAX_DELIVERY_ATTRIBUTE_SLOTS = 50
 
 
 class EnrichmentSourceDiagnostic(BaseModel):
@@ -335,82 +336,115 @@ def _map_validated_attributes(
     attribute_reference: AttributeReference | None,
     uom_reference: UOMReference | None,
 ) -> list[MappingDiagnostic]:
+    """Place accepted attributes into generic delivery slots by canonical name.
+
+    Validation and reference gates run before ordering. Explicit mapping
+    profiles may supply canonical names, labels, and reference metadata, but
+    their legacy ``slot`` values are deliberately ignored here.
+    """
     diagnostics: list[MappingDiagnostic] = []
     category = pipeline_result.product_identification.product_category
-    validated = {attribute.name: attribute for attribute in pipeline_result.validation.attributes}
+    definitions = {
+        definition.name: definition
+        for definition in pipeline_result.product_identification.attributes
+    }
+    accepted: list[tuple[str, str, str, str, str]] = []
 
-    for mapping in mappings.mappings:
-        attribute = next(
-            (
-                candidate
-                for candidate in pipeline_result.validation.attributes
-                if mapping.matches(candidate.name, category)
-            ),
-            None,
-        )
-        diagnostic_name = attribute.name if attribute is not None else mapping.canonical_name
-        if attribute is None:
-            diagnostics.append(
-                _skipped(mapping, "The extracted schema did not contain this attribute.", diagnostic_name)
-            )
-            continue
+    for attribute in pipeline_result.validation.attributes:
+        mapping = mappings.resolve(attribute.name, category=category)
+        canonical_name = mapping.canonical_name if mapping is not None else attribute.name
         if attribute.status == "not_found":
-            diagnostics.append(_skipped(mapping, "The attribute was not found in the sources.", diagnostic_name))
+            diagnostics.append(_skipped_for_attribute(attribute.name, None, "The attribute was not found in the sources."))
             continue
         if attribute.status == "conflict":
-            diagnostics.append(_skipped(mapping, "Conflicting source values require review.", diagnostic_name))
+            diagnostics.append(_skipped_for_attribute(attribute.name, None, "Conflicting source values require review."))
             continue
         confidence = next(
             (item for item in pipeline_result.confidence.attributes if item.name == attribute.name),
             None,
         )
-        if confidence is not None and _confidence_below(confidence.level, mapping.minimum_confidence_level):
-            diagnostics.append(_skipped(mapping, "Confidence is below the controlled mapping threshold; the attribute requires review.", diagnostic_name))
+        minimum_confidence = mapping.minimum_confidence_level if mapping is not None else "medium"
+        if confidence is not None and _confidence_below(confidence.level, minimum_confidence):
+            diagnostics.append(_skipped_for_attribute(attribute.name, None, "Confidence is below the controlled mapping threshold; the attribute requires review."))
             continue
         if not attribute.values:
-            diagnostics.append(_skipped(mapping, "No validated source value was available.", diagnostic_name))
+            diagnostics.append(_skipped_for_attribute(attribute.name, None, "No validated source value was available."))
             continue
 
         value = attribute.values[0].value
-        delivery_uom_reference = mapping.uom_reference_name
+        definition = definitions.get(attribute.name)
+        declared_uom = definition.unit if definition is not None else None
+        delivery_uom_reference = mapping.uom_reference_name if mapping is not None else declared_uom
         delivery_value = _remove_expected_uom(value, delivery_uom_reference)
-        reference_name = mapping.value_reference_name
-        if attribute_reference is None:
-            diagnostics.append(_skipped(mapping, "No controlled attribute reference was configured.", diagnostic_name))
-            continue
-        value_result = attribute_reference.validate_value(category, reference_name, delivery_value)
-        if value_result.status != "resolved":
-            diagnostics.append(_skipped(mapping, value_result.reason, diagnostic_name))
-            continue
+        reference_name = mapping.value_reference_name if mapping is not None else canonical_name
+        if attribute_reference is not None:
+            value_result = attribute_reference.validate_value(category, reference_name, delivery_value)
+            if value_result.status != "resolved":
+                diagnostics.append(_skipped_for_attribute(attribute.name, None, value_result.reason))
+                continue
 
         delivery_uom = ""
         if delivery_uom_reference:
-            if uom_reference is None:
-                diagnostics.append(_skipped(mapping, "No controlled UOM reference was configured.", diagnostic_name))
-                continue
-            uom_result = uom_reference.resolve(delivery_uom_reference)
-            if uom_result.status != "resolved":
-                diagnostics.append(_skipped(mapping, uom_result.reason, diagnostic_name))
-                continue
-            allowed_uoms = attribute_reference.allowed_uoms(category, reference_name)
-            if allowed_uoms and normalize_reference_value(str(uom_result.resolved_value)) not in {
-                normalize_reference_value(item) for item in allowed_uoms
-            }:
-                diagnostics.append(_skipped(mapping, "The UOM is not approved for this attribute.", diagnostic_name))
-                continue
-            delivery_uom = str(uom_result.resolved_value)
+            if uom_reference is not None:
+                uom_result = uom_reference.resolve(delivery_uom_reference)
+                if uom_result.status != "resolved":
+                    diagnostics.append(_skipped_for_attribute(attribute.name, None, uom_result.reason))
+                    continue
+                allowed_uoms = (
+                    attribute_reference.allowed_uoms(category, reference_name)
+                    if attribute_reference is not None else ()
+                )
+                if allowed_uoms and normalize_reference_value(str(uom_result.resolved_value)) not in {
+                    normalize_reference_value(item) for item in allowed_uoms
+                }:
+                    diagnostics.append(_skipped_for_attribute(attribute.name, None, "The UOM is not approved for this attribute."))
+                    continue
+                delivery_uom = str(uom_result.resolved_value)
+            else:
+                allowed_uoms = (
+                    attribute_reference.allowed_uoms(category, reference_name)
+                    if attribute_reference is not None else ()
+                )
+                if allowed_uoms and normalize_reference_value(delivery_uom_reference) not in {
+                    normalize_reference_value(item) for item in allowed_uoms
+                }:
+                    diagnostics.append(_skipped_for_attribute(attribute.name, None, "The UOM is not approved for this attribute."))
+                    continue
+                # No UOM reference means there is no approved canonical UOM
+                # to substitute. Preserve the declared source wording only
+                # when no stricter allowed-UOM list rejects it.
+                delivery_uom = delivery_uom_reference
 
-        delivery_row[f"ATTRIBUTE_LABEL {mapping.slot}"] = mapping.delivery_label
-        delivery_row[f"ATTRIBUTE_VALUE {mapping.slot}"] = delivery_value
-        delivery_row[f"ATTRIBUTE_UOM {mapping.slot}"] = delivery_uom
+        label = mapping.delivery_label if mapping is not None else _display_attribute_label(canonical_name)
+        accepted.append((canonical_name, label, delivery_value, delivery_uom))
+
+    # Canonical identity is application data, unlike the order in which
+    # Gemini happened to return definitions.  Case-folding keeps this key
+    # deterministic without changing the canonical spelling used for labels.
+    accepted.sort(key=lambda item: (normalize_reference_value(item[0]), item[0]))
+    for next_slot, (canonical_name, label, delivery_value, delivery_uom) in enumerate(
+        accepted[:MAX_DELIVERY_ATTRIBUTE_SLOTS], start=1
+    ):
+        delivery_row[f"ATTRIBUTE_LABEL {next_slot}"] = label
+        delivery_row[f"ATTRIBUTE_VALUE {next_slot}"] = delivery_value
+        delivery_row[f"ATTRIBUTE_UOM {next_slot}"] = delivery_uom
         diagnostics.append(
             MappingDiagnostic(
-                attribute_name=attribute.name,
-                slot=mapping.slot,
+                attribute_name=canonical_name,
+                slot=next_slot,
                 status="mapped",
-                reason=f"Mapped using {mapping.mapping_source} controlled mapping and validated evidence.",
+                reason=(
+                    f"Mapped sequentially to delivery slot {next_slot}; "
+                    "the slot carries no fixed semantic meaning."
+                ),
             )
         )
+    for canonical_name, _label, _value, _uom in accepted[MAX_DELIVERY_ATTRIBUTE_SLOTS:]:
+        diagnostics.append(_skipped_for_attribute(
+            canonical_name,
+            None,
+            "ATTRIBUTE_SLOT_LIMIT_EXCEEDED: more than 50 validated attributes are available.",
+        ))
     return diagnostics
 
 
@@ -433,6 +467,24 @@ def _skipped(
         status="skipped",
         reason=reason,
     )
+
+
+def _skipped_for_attribute(
+    attribute_name: str,
+    slot: int | None,
+    reason: str,
+) -> MappingDiagnostic:
+    return MappingDiagnostic(
+        attribute_name=attribute_name,
+        slot=slot,
+        status="skipped",
+        reason=reason,
+    )
+
+
+def _display_attribute_label(name: str) -> str:
+    """Create a stable label from a canonical lower_snake_case identity."""
+    return name.replace("_", " ").title()
 
 
 def _confidence_below(actual: str, minimum: str) -> bool:

@@ -28,6 +28,7 @@ from .pipeline import (
     SourceSummary,
     run_pipeline,
 )
+from .gemini_client import GeminiTransientError, TRANSIENT_RETRY_DELAYS_SECONDS
 from .unit_normalization import (
     NormalizedMeasurement,
     measurements_equivalent,
@@ -91,6 +92,7 @@ from .controlled_attribute_mapping import (
     ControlledAttributeMappingRegistry,
     resolve_controlled_attribute_mapping,
 )
+from .attribute_mapping_coverage import task42_candidate_mappings
 from .review import (
     ReviewIssue,
     ReviewReport,
@@ -156,6 +158,8 @@ __all__ = [
     "ProductIntelligenceResult",
     "SourceSummary",
     "run_pipeline",
+    "GeminiTransientError",
+    "TRANSIENT_RETRY_DELAYS_SECONDS",
     "NormalizedMeasurement",
     "measurements_equivalent",
     "normalize_measurement",
@@ -203,6 +207,7 @@ __all__ = [
     "ControlledAttributeMapping",
     "ControlledAttributeMappingRegistry",
     "resolve_controlled_attribute_mapping",
+    "task42_candidate_mappings",
     "ReviewIssue",
     "ReviewReport",
     "build_review_report",

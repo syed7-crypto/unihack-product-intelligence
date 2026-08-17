@@ -261,8 +261,10 @@ class CatalogueEnrichmentTests(unittest.TestCase):
             attribute_mappings=mappings,
         )
 
-        self.assertEqual(result.delivery_row["ATTRIBUTE_VALUE 4"], "Stainless Steel")
-        self.assertEqual(result.delivery_row["ATTRIBUTE_VALUE 5"], "")
+        # Legacy slot metadata is ignored: valid attributes are assigned the
+        # next generic slot, while the invalid UOM attribute is skipped.
+        self.assertEqual(result.delivery_row["ATTRIBUTE_VALUE 1"], "Stainless Steel")
+        self.assertEqual(result.delivery_row["ATTRIBUTE_VALUE 2"], "")
         self.assertTrue(any(item.status == "skipped" for item in result.mapping_diagnostics))
 
     def test_retrieval_failure_leaves_enrichment_fields_blank(self) -> None:

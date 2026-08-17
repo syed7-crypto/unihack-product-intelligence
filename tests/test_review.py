@@ -206,7 +206,7 @@ class ReviewLayerTests(unittest.TestCase):
         self.assertIn("LOW_CONFIDENCE", codes)
         self.assertEqual(report.status, "needs_review")
 
-    def test_unsupported_uom_and_missing_mapping_block_attributes(self) -> None:
+    def test_unsupported_uom_blocks_attribute_but_missing_fixed_slot_does_not(self) -> None:
         result = pipeline_result()
         report = build_review_report(
             pipeline_result=result,
@@ -234,7 +234,7 @@ class ReviewLayerTests(unittest.TestCase):
             mapping_diagnostics=[],
             evaluation_comparison=None,
         )
-        self.assertIn("ATTRIBUTE_MAPPING_MISSING", {issue.code for issue in missing_mapping.issues})
+        self.assertNotIn("ATTRIBUTE_MAPPING_MISSING", {issue.code for issue in missing_mapping.issues})
 
     def test_evidence_failure_is_blocked_and_invalid_evidence_is_not_approved(self) -> None:
         report = build_review_report(
