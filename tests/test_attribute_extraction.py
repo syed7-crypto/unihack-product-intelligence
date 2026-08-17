@@ -6,9 +6,11 @@ import unittest
 from src.product_intelligence.attribute_extraction import (
     AttributeExtractionError,
     AttributeExtractionResult,
+    GeminiAttributeExtractionResult,
     extract_attribute_values,
     normalize_location_label,
 )
+from pydantic import ValidationError
 from src.product_intelligence.extraction import NormalizedSource, SourceLocation
 from src.product_intelligence.product_identification import ProductIdentificationResult
 
@@ -95,14 +97,58 @@ def found_for_source(
 
 
 class AttributeExtractionTests(unittest.TestCase):
+    def test_gemini_found_contract_requires_value_and_evidence(self) -> None:
+        valid = {
+            "name": "material",
+            "status": "found",
+            "value": "Stainless Steel",
+            "evidence": {
+                "source_id": "source-test",
+                "source_name": "valve.txt",
+                "location": "document",
+                "quote": "Material: Stainless Steel",
+            },
+        }
+        parsed = GeminiAttributeExtractionResult.model_validate({"attributes": [valid]})
+        self.assertEqual(parsed.attributes[0].value, "Stainless Steel")
+
+        for invalid in (
+            {**valid, "value": None},
+            {key: value for key, value in valid.items() if key != "value"},
+            {**valid, "evidence": None},
+            {key: value for key, value in valid.items() if key != "evidence"},
+        ):
+            with self.assertRaises(ValidationError):
+                GeminiAttributeExtractionResult.model_validate({"attributes": [invalid]})
+
+    def test_gemini_not_found_contract_requires_null_value_and_evidence(self) -> None:
+        valid = {"name": "temperature", "status": "not_found", "value": None, "evidence": None}
+        parsed = GeminiAttributeExtractionResult.model_validate({"attributes": [valid]})
+        self.assertIsNone(parsed.attributes[0].value)
+
+        with self.assertRaises(ValidationError):
+            GeminiAttributeExtractionResult.model_validate({"attributes": [{"name": "temperature", "status": "not_found"}]})
+        with self.assertRaises(ValidationError):
+            GeminiAttributeExtractionResult.model_validate({"attributes": [{**valid, "value": "20 C"}]})
+        with self.assertRaises(ValidationError):
+            GeminiAttributeExtractionResult.model_validate({"attributes": [{**valid, "evidence": {"source_id": "x", "source_name": "x", "quote": "20 C"}}]})
+
+    def test_gemini_schema_marks_conditional_fields_required(self) -> None:
+        schema = GeminiAttributeExtractionResult.model_json_schema()
+        variants = schema["$defs"]["FoundAttributeResponse"], schema["$defs"]["NotFoundAttributeResponse"]
+        self.assertIn("value", variants[0]["required"])
+        self.assertIn("evidence", variants[0]["required"])
+        self.assertIn("value", variants[1]["required"])
+        self.assertIn("evidence", variants[1]["required"])
+
     def test_value_not_supported_by_valid_quote_is_rejected(self) -> None:
         source = source_with_text("Material: Stainless Steel")
         response = {
             "attributes": [
                 found("material", "Carbon Steel", "Material: Stainless Steel"),
-                {"name": "pressure_rating", "value": None, "status": "not_found"},
-                {"name": "connection_type", "value": None, "status": "not_found"},
-                {"name": "valve_type", "value": None, "status": "not_found"},
+                {"name": "pressure_rating", "value": None, "status": "not_found", "evidence": None},
+                {"name": "connection_type", "value": None, "status": "not_found", "evidence": None},
+                {"name": "valve_type", "value": None, "status": "not_found", "evidence": None},
             ]
         }
 
@@ -115,9 +161,9 @@ class AttributeExtractionTests(unittest.TestCase):
         response = {
             "attributes": [
                 found("material", "Carbon Steel", "Pressure rating: 150 PSI"),
-                {"name": "pressure_rating", "value": None, "status": "not_found"},
-                {"name": "connection_type", "value": None, "status": "not_found"},
-                {"name": "valve_type", "value": None, "status": "not_found"},
+                {"name": "pressure_rating", "value": None, "status": "not_found", "evidence": None},
+                {"name": "connection_type", "value": None, "status": "not_found", "evidence": None},
+                {"name": "valve_type", "value": None, "status": "not_found", "evidence": None},
             ]
         }
 
@@ -130,9 +176,9 @@ class AttributeExtractionTests(unittest.TestCase):
         response = {
             "attributes": [
                 found("material", " stainless steel ", "Material: Stainless   Steel"),
-                {"name": "pressure_rating", "value": None, "status": "not_found"},
-                {"name": "connection_type", "value": None, "status": "not_found"},
-                {"name": "valve_type", "value": None, "status": "not_found"},
+                {"name": "pressure_rating", "value": None, "status": "not_found", "evidence": None},
+                {"name": "connection_type", "value": None, "status": "not_found", "evidence": None},
+                {"name": "valve_type", "value": None, "status": "not_found", "evidence": None},
             ]
         }
 
@@ -288,9 +334,9 @@ class AttributeExtractionTests(unittest.TestCase):
         response = {
             "attributes": [
                 found("material", "stainless steel", "stainless steel body"),
-                {"name": "pressure_rating", "value": None, "status": "not_found"},
-                {"name": "connection_type", "value": None, "status": "not_found"},
-                {"name": "valve_type", "value": None, "status": "not_found"},
+                {"name": "pressure_rating", "value": None, "status": "not_found", "evidence": None},
+                {"name": "connection_type", "value": None, "status": "not_found", "evidence": None},
+                {"name": "valve_type", "value": None, "status": "not_found", "evidence": None},
             ]
         }
 
@@ -329,9 +375,9 @@ class AttributeExtractionTests(unittest.TestCase):
         response = {
             "attributes": [
                 {"name": "material", "value": "stainless steel", "status": "found", "evidence": None},
-                {"name": "pressure_rating", "value": None, "status": "not_found"},
-                {"name": "connection_type", "value": None, "status": "not_found"},
-                {"name": "valve_type", "value": None, "status": "not_found"},
+                {"name": "pressure_rating", "value": None, "status": "not_found", "evidence": None},
+                {"name": "connection_type", "value": None, "status": "not_found", "evidence": None},
+                {"name": "valve_type", "value": None, "status": "not_found", "evidence": None},
             ]
         }
 
@@ -370,9 +416,9 @@ class AttributeExtractionTests(unittest.TestCase):
         response = {
             "attributes": [
                 found("material", "carbon steel", "carbon steel body"),
-                {"name": "pressure_rating", "value": None, "status": "not_found"},
-                {"name": "connection_type", "value": None, "status": "not_found"},
-                {"name": "valve_type", "value": None, "status": "not_found"},
+                {"name": "pressure_rating", "value": None, "status": "not_found", "evidence": None},
+                {"name": "connection_type", "value": None, "status": "not_found", "evidence": None},
+                {"name": "valve_type", "value": None, "status": "not_found", "evidence": None},
             ]
         }
 

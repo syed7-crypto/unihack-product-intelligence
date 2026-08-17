@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from typing import Literal, Protocol
+from typing import Annotated, Literal, Protocol, Union
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
@@ -66,6 +66,43 @@ class AttributeExtractionResult(BaseModel):
     rejected_attributes: list[RejectedAttribute] = Field(default_factory=list)
 
 
+class FoundAttributeResponse(BaseModel):
+    """Gemini response variant for an evidence-backed value."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    name: str = Field(min_length=1)
+    value: str = Field(min_length=1)
+    status: Literal["found"]
+    evidence: AttributeEvidence
+
+
+class NotFoundAttributeResponse(BaseModel):
+    """Gemini response variant for an absent or unsupported value."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    name: str = Field(min_length=1)
+    value: None = Field(...)
+    status: Literal["not_found"]
+    evidence: None = Field(...)
+
+
+GeminiAttribute = Annotated[
+    Union[FoundAttributeResponse, NotFoundAttributeResponse],
+    Field(discriminator="status"),
+]
+
+
+class GeminiAttributeExtractionResult(BaseModel):
+    """Strict response DTO sent to Gemini and validated before normalization."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    attributes: list[GeminiAttribute] = Field(min_length=1)
+    rejected_attributes: list[RejectedAttribute] = Field(default_factory=list)
+
+
 class AttributeExtractionError(RuntimeError):
     """Raised when Gemini output is malformed or unsupported by the source."""
 
@@ -97,9 +134,10 @@ def extract_attribute_values(
     try:
         raw_response = gemini_client.generate_structured_json(
             _build_prompt(source, product_identification),
-            AttributeExtractionResult,
+            GeminiAttributeExtractionResult,
         )
-        result = AttributeExtractionResult.model_validate_json(raw_response)
+        response = GeminiAttributeExtractionResult.model_validate_json(raw_response)
+        result = AttributeExtractionResult.model_validate(response.model_dump())
         _validate_against_input(result, source, product_identification)
         return result
     except ValidationError as error:
@@ -242,6 +280,9 @@ Do not guess, infer, enrich, or invent values. Return status \"not_found\" with
 value null and evidence null when an attribute is absent or unsupported.
 Every \"found\" value MUST have evidence with the exact source_id and source_name,
 a short supporting quote copied from the source, and a source location when available.
+If status is \"found\", the value field MUST be present and non-null and evidence
+MUST be present. If status is \"not_found\", value MUST be present as null and
+evidence MUST be present as null.
 For PDF sources, preserve the page location whenever possible.
 {webpage_location_rules}
 
