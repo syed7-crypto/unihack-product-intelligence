@@ -86,6 +86,11 @@ from .catalogue_enrichment import (
     MappingDiagnostic,
     enrich_catalogue_row,
 )
+from .controlled_attribute_mapping import (
+    ControlledAttributeMapping,
+    ControlledAttributeMappingRegistry,
+    resolve_controlled_attribute_mapping,
+)
 from .review import (
     ReviewIssue,
     ReviewReport,
@@ -195,6 +200,9 @@ __all__ = [
     "EvaluationFieldDifference",
     "MappingDiagnostic",
     "enrich_catalogue_row",
+    "ControlledAttributeMapping",
+    "ControlledAttributeMappingRegistry",
+    "resolve_controlled_attribute_mapping",
     "ReviewIssue",
     "ReviewReport",
     "build_review_report",

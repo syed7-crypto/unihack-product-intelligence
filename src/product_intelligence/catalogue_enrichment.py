@@ -14,6 +14,10 @@ from typing import Literal
 from pydantic import BaseModel, Field, model_validator
 
 from .catalog_input import CatalogInputRow, brand_candidate
+from .controlled_attribute_mapping import (
+    ControlledAttributeMapping,
+    ControlledAttributeMappingRegistry,
+)
 from .delivery_output import compare_delivery_rows, map_raw_fields_to_delivery
 from .delivery_schema import DeliverySchema
 from .manufacturer_enrichment import (
@@ -34,36 +38,8 @@ from .reference_data import (
 from .review import ReviewReport, build_review_report
 
 
-class AttributeDeliveryMapping(BaseModel):
-    """One explicit internal-attribute to delivery-slot mapping.
-
-    ``mapping_source='mock'`` is the default because official UniHack
-    attribute mappings/LOVs are not currently present in this repository.
-    Mock mappings are suitable for tests and demonstrations only.
-    """
-
-    internal_attribute_name: str = Field(min_length=1)
-    delivery_label: str = Field(min_length=1)
-    slot: int = Field(ge=1, le=50)
-    reference_attribute: str | None = None
-    expected_uom: str | None = None
-    mapping_source: Literal["mock", "official"] = "mock"
-
-
-class AttributeDeliveryMappings(BaseModel):
-    """Validated collection of non-overlapping delivery mappings."""
-
-    mappings: list[AttributeDeliveryMapping] = Field(default_factory=list)
-
-    @model_validator(mode="after")
-    def validate_unique_mappings(self) -> "AttributeDeliveryMappings":
-        slots = [mapping.slot for mapping in self.mappings]
-        names = [mapping.internal_attribute_name for mapping in self.mappings]
-        if len(slots) != len(set(slots)):
-            raise ValueError("Delivery attribute slots must be unique.")
-        if len(names) != len(set(names)):
-            raise ValueError("Internal attribute mappings must be unique.")
-        return self
+AttributeDeliveryMapping = ControlledAttributeMapping
+AttributeDeliveryMappings = ControlledAttributeMappingRegistry
 
 
 class EnrichmentSourceDiagnostic(BaseModel):
@@ -364,52 +340,63 @@ def _map_validated_attributes(
     validated = {attribute.name: attribute for attribute in pipeline_result.validation.attributes}
 
     for mapping in mappings.mappings:
-        attribute = validated.get(mapping.internal_attribute_name)
+        attribute = next(
+            (
+                candidate
+                for candidate in pipeline_result.validation.attributes
+                if mapping.matches(candidate.name, category)
+            ),
+            None,
+        )
+        diagnostic_name = attribute.name if attribute is not None else mapping.canonical_name
         if attribute is None:
-            diagnostics.append(_skipped(mapping, "The extracted schema did not contain this attribute."))
+            diagnostics.append(
+                _skipped(mapping, "The extracted schema did not contain this attribute.", diagnostic_name)
+            )
             continue
         if attribute.status == "not_found":
-            diagnostics.append(_skipped(mapping, "The attribute was not found in the sources."))
+            diagnostics.append(_skipped(mapping, "The attribute was not found in the sources.", diagnostic_name))
             continue
         if attribute.status == "conflict":
-            diagnostics.append(_skipped(mapping, "Conflicting source values require review."))
+            diagnostics.append(_skipped(mapping, "Conflicting source values require review.", diagnostic_name))
             continue
         confidence = next(
             (item for item in pipeline_result.confidence.attributes if item.name == attribute.name),
             None,
         )
-        if confidence is not None and confidence.level == "low":
-            diagnostics.append(_skipped(mapping, "Confidence is low; the attribute requires review."))
+        if confidence is not None and _confidence_below(confidence.level, mapping.minimum_confidence_level):
+            diagnostics.append(_skipped(mapping, "Confidence is below the controlled mapping threshold; the attribute requires review.", diagnostic_name))
             continue
         if not attribute.values:
-            diagnostics.append(_skipped(mapping, "No validated source value was available."))
+            diagnostics.append(_skipped(mapping, "No validated source value was available.", diagnostic_name))
             continue
 
         value = attribute.values[0].value
-        delivery_value = _remove_expected_uom(value, mapping.expected_uom)
-        reference_name = mapping.reference_attribute or mapping.internal_attribute_name
+        delivery_uom_reference = mapping.uom_reference_name
+        delivery_value = _remove_expected_uom(value, delivery_uom_reference)
+        reference_name = mapping.value_reference_name
         if attribute_reference is None:
-            diagnostics.append(_skipped(mapping, "No controlled attribute reference was configured."))
+            diagnostics.append(_skipped(mapping, "No controlled attribute reference was configured.", diagnostic_name))
             continue
         value_result = attribute_reference.validate_value(category, reference_name, delivery_value)
         if value_result.status != "resolved":
-            diagnostics.append(_skipped(mapping, value_result.reason))
+            diagnostics.append(_skipped(mapping, value_result.reason, diagnostic_name))
             continue
 
         delivery_uom = ""
-        if mapping.expected_uom:
+        if delivery_uom_reference:
             if uom_reference is None:
-                diagnostics.append(_skipped(mapping, "No controlled UOM reference was configured."))
+                diagnostics.append(_skipped(mapping, "No controlled UOM reference was configured.", diagnostic_name))
                 continue
-            uom_result = uom_reference.resolve(mapping.expected_uom)
+            uom_result = uom_reference.resolve(delivery_uom_reference)
             if uom_result.status != "resolved":
-                diagnostics.append(_skipped(mapping, uom_result.reason))
+                diagnostics.append(_skipped(mapping, uom_result.reason, diagnostic_name))
                 continue
             allowed_uoms = attribute_reference.allowed_uoms(category, reference_name)
             if allowed_uoms and normalize_reference_value(str(uom_result.resolved_value)) not in {
                 normalize_reference_value(item) for item in allowed_uoms
             }:
-                diagnostics.append(_skipped(mapping, "The UOM is not approved for this attribute."))
+                diagnostics.append(_skipped(mapping, "The UOM is not approved for this attribute.", diagnostic_name))
                 continue
             delivery_uom = str(uom_result.resolved_value)
 
@@ -418,7 +405,7 @@ def _map_validated_attributes(
         delivery_row[f"ATTRIBUTE_UOM {mapping.slot}"] = delivery_uom
         diagnostics.append(
             MappingDiagnostic(
-                attribute_name=mapping.internal_attribute_name,
+                attribute_name=attribute.name,
                 slot=mapping.slot,
                 status="mapped",
                 reason=f"Mapped using {mapping.mapping_source} controlled mapping and validated evidence.",
@@ -435,13 +422,22 @@ def _remove_expected_uom(value: str, expected_uom: str | None) -> str:
     return stripped if stripped else value
 
 
-def _skipped(mapping: AttributeDeliveryMapping, reason: str) -> MappingDiagnostic:
+def _skipped(
+    mapping: AttributeDeliveryMapping,
+    reason: str,
+    attribute_name: str | None = None,
+) -> MappingDiagnostic:
     return MappingDiagnostic(
-        attribute_name=mapping.internal_attribute_name,
+        attribute_name=attribute_name or mapping.canonical_name,
         slot=mapping.slot,
         status="skipped",
         reason=reason,
     )
+
+
+def _confidence_below(actual: str, minimum: str) -> bool:
+    levels = {"low": 0, "medium": 1, "high": 2}
+    return levels.get(actual, 0) < levels.get(minimum, 1)
 
 
 def _finish_result(
