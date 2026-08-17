@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from typing import Annotated, Literal, Protocol, Union
+from typing import Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
@@ -66,43 +66,6 @@ class AttributeExtractionResult(BaseModel):
     rejected_attributes: list[RejectedAttribute] = Field(default_factory=list)
 
 
-class FoundAttributeResponse(BaseModel):
-    """Gemini response variant for an evidence-backed value."""
-
-    model_config = ConfigDict(extra="ignore")
-
-    name: str = Field(min_length=1)
-    value: str = Field(min_length=1)
-    status: Literal["found"]
-    evidence: AttributeEvidence
-
-
-class NotFoundAttributeResponse(BaseModel):
-    """Gemini response variant for an absent or unsupported value."""
-
-    model_config = ConfigDict(extra="ignore")
-
-    name: str = Field(min_length=1)
-    value: None = Field(...)
-    status: Literal["not_found"]
-    evidence: None = Field(...)
-
-
-GeminiAttribute = Annotated[
-    Union[FoundAttributeResponse, NotFoundAttributeResponse],
-    Field(discriminator="status"),
-]
-
-
-class GeminiAttributeExtractionResult(BaseModel):
-    """Strict response DTO sent to Gemini and validated before normalization."""
-
-    model_config = ConfigDict(extra="ignore")
-
-    attributes: list[GeminiAttribute] = Field(min_length=1)
-    rejected_attributes: list[RejectedAttribute] = Field(default_factory=list)
-
-
 class AttributeExtractionError(RuntimeError):
     """Raised when Gemini output is malformed or unsupported by the source."""
 
@@ -134,10 +97,9 @@ def extract_attribute_values(
     try:
         raw_response = gemini_client.generate_structured_json(
             _build_prompt(source, product_identification),
-            GeminiAttributeExtractionResult,
+            AttributeExtractionResult,
         )
-        response = GeminiAttributeExtractionResult.model_validate_json(raw_response)
-        result = AttributeExtractionResult.model_validate(response.model_dump())
+        result = AttributeExtractionResult.model_validate_json(raw_response)
         _validate_against_input(result, source, product_identification)
         return result
     except ValidationError as error:

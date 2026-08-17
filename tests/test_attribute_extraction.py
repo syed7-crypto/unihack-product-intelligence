@@ -6,7 +6,6 @@ import unittest
 from src.product_intelligence.attribute_extraction import (
     AttributeExtractionError,
     AttributeExtractionResult,
-    GeminiAttributeExtractionResult,
     extract_attribute_values,
     normalize_location_label,
 )
@@ -109,7 +108,7 @@ class AttributeExtractionTests(unittest.TestCase):
                 "quote": "Material: Stainless Steel",
             },
         }
-        parsed = GeminiAttributeExtractionResult.model_validate({"attributes": [valid]})
+        parsed = AttributeExtractionResult.model_validate({"attributes": [valid]})
         self.assertEqual(parsed.attributes[0].value, "Stainless Steel")
 
         for invalid in (
@@ -119,27 +118,32 @@ class AttributeExtractionTests(unittest.TestCase):
             {key: value for key, value in valid.items() if key != "evidence"},
         ):
             with self.assertRaises(ValidationError):
-                GeminiAttributeExtractionResult.model_validate({"attributes": [invalid]})
+                AttributeExtractionResult.model_validate({"attributes": [invalid]})
 
     def test_gemini_not_found_contract_requires_null_value_and_evidence(self) -> None:
         valid = {"name": "temperature", "status": "not_found", "value": None, "evidence": None}
-        parsed = GeminiAttributeExtractionResult.model_validate({"attributes": [valid]})
+        parsed = AttributeExtractionResult.model_validate({"attributes": [valid]})
         self.assertIsNone(parsed.attributes[0].value)
 
         with self.assertRaises(ValidationError):
-            GeminiAttributeExtractionResult.model_validate({"attributes": [{"name": "temperature", "status": "not_found"}]})
+            AttributeExtractionResult.model_validate({"attributes": [{**valid, "value": "20 C"}]})
         with self.assertRaises(ValidationError):
-            GeminiAttributeExtractionResult.model_validate({"attributes": [{**valid, "value": "20 C"}]})
-        with self.assertRaises(ValidationError):
-            GeminiAttributeExtractionResult.model_validate({"attributes": [{**valid, "evidence": {"source_id": "x", "source_name": "x", "quote": "20 C"}}]})
+            AttributeExtractionResult.model_validate({"attributes": [{**valid, "evidence": {"source_id": "x", "source_name": "x", "quote": "20 C"}}]})
 
-    def test_gemini_schema_marks_conditional_fields_required(self) -> None:
-        schema = GeminiAttributeExtractionResult.model_json_schema()
-        variants = schema["$defs"]["FoundAttributeResponse"], schema["$defs"]["NotFoundAttributeResponse"]
-        self.assertIn("value", variants[0]["required"])
-        self.assertIn("evidence", variants[0]["required"])
-        self.assertIn("value", variants[1]["required"])
-        self.assertIn("evidence", variants[1]["required"])
+    def test_gemini_schema_is_flat_and_has_no_union_keywords(self) -> None:
+        schema_text = json.dumps(AttributeExtractionResult.model_json_schema())
+        self.assertNotIn("discriminator", schema_text)
+        self.assertNotIn("oneOf", schema_text)
+
+    def test_extraction_uses_flat_gemini_schema(self) -> None:
+        response = {"attributes": [{"name": "material", "value": None, "status": "not_found", "evidence": None}]}
+        source = source_with_text("Industrial valve")
+        schema = ProductIdentificationResult.model_validate(
+            {"product_type": "Valve", "product_category": "Valve", "attributes": [{"name": "material", "label": "Material"}]}
+        )
+        client = FakeGeminiClient(json.dumps(response))
+        extract_attribute_values(source, schema, client)
+        self.assertIs(client.response_schema, AttributeExtractionResult)
 
     def test_value_not_supported_by_valid_quote_is_rejected(self) -> None:
         source = source_with_text("Material: Stainless Steel")
