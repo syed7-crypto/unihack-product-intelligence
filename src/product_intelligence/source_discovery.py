@@ -29,7 +29,7 @@ from .reference_data import ReferenceResolutionResult, normalize_reference_value
 SourceKind = Literal["webpage", "pdf", "unknown"]
 CandidateStatus = Literal["candidate", "rejected"]
 DiscoveryStatus = Literal["found", "no_candidates", "failed"]
-VerificationStatus = Literal["verified", "failed", "rejected"]
+VerificationStatus = Literal["verified", "verified_secondary", "failed", "rejected"]
 
 
 class SearchProviderError(RuntimeError):
@@ -351,6 +351,7 @@ class ManufacturerSourcePolicy(BaseModel):
 
     manufacturer_name: str | None = None
     approved_domains: tuple[str, ...] = ()
+    source_role: Literal["manufacturer", "secondary"] = "manufacturer"
     allowed_source_kinds: tuple[SourceKind, ...] = ("webpage", "pdf")
     query_templates: tuple[str, ...] = (
         "{part_number}",
@@ -634,7 +635,13 @@ def discover_and_verify_sources(
         )
         if retrieval.success and retrieval.source is not None:
             verified_sources.append(retrieval.source)
-            diagnostics.append(_diagnostic(candidate, "verified", None))
+            diagnostics.append(
+                _diagnostic(
+                    candidate,
+                    "verified_secondary" if policy.source_role == "secondary" else "verified",
+                    None,
+                )
+            )
         else:
             diagnostics.append(
                 _diagnostic(candidate, "failed", retrieval.error or "Source verification failed.")

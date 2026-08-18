@@ -296,8 +296,16 @@ def _discover_for_row(
             ),
         )
         for item in verification.diagnostics
-        if item.verification_status != "verified"
+        if item.verification_status not in {"verified", "verified_secondary"}
     ]
+    diagnostics.extend(
+        EnrichmentSourceDiagnostic(
+            url="",
+            success=False,
+            error=error,
+        )
+        for error in verification.discovery.errors
+    )
     if not verification.verified_sources and not diagnostics:
         reason = (
             "No verified manufacturer source was found."
@@ -319,7 +327,10 @@ def _runtime_outcome(result: IdentityResolutionResult) -> _DiscoveryOutcome:
             diagnostics=[],
             runtime_identity=result,
         )
-    reason = f"Identity/source policy resolution UNKNOWN: {result.reason}"
+    if result.failure_code == "SOURCE_RETRIEVAL_FAILED":
+        reason = f"SOURCE_RETRIEVAL_FAILED: {result.reason}"
+    else:
+        reason = f"Identity/source policy resolution UNKNOWN: {result.reason}"
     if result.diagnostics:
         reason = f"{reason} {' | '.join(result.diagnostics)}"
     return _DiscoveryOutcome(

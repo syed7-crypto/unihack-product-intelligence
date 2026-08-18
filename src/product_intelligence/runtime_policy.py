@@ -17,6 +17,7 @@ from .source_discovery import SearchResult, SourceSearchProvider
 
 IdentityResolutionState = Literal["known", "resolvable", "unknown"]
 RuntimeIdentityKind = Literal["manufacturer", "brand"]
+IdentityFailureCode = Literal["SOURCE_RETRIEVAL_FAILED", "NO_TRUSTWORTHY_SOURCE"]
 
 
 class RuntimeAuthorityEvidence(BaseModel):
@@ -69,6 +70,7 @@ class IdentityResolutionResult(BaseModel):
     approved_domains: tuple[str, ...] = ()
     reason: str
     diagnostics: list[str] = Field(default_factory=list)
+    failure_code: IdentityFailureCode | None = None
     runtime_policy: ControlledSourcePolicy | None = None
     verified_sources: list[ManufacturerSource] = Field(default_factory=list)
 
@@ -114,6 +116,7 @@ def resolve_identity_and_source_policy(
         return IdentityResolutionResult(
             state="unknown",
             reason="No controlled identity or runtime authority verifier was available.",
+            failure_code="NO_TRUSTWORTHY_SOURCE",
         )
     if max_results < 1:
         raise ValueError("max_results must be positive.")
@@ -145,8 +148,10 @@ def resolve_identity_and_source_policy(
             state="unknown",
             reason="Runtime candidate-domain discovery failed; no policy was created.",
             diagnostics=[str(error) or "Search failed."],
+            failure_code="SOURCE_RETRIEVAL_FAILED",
         )
 
+    retrieval_failure_seen = False
     for domain_candidate in domain_candidates:
         domain = _normalize_candidate_domain(domain_candidate.domain)
         if domain is None:
@@ -160,6 +165,7 @@ def resolve_identity_and_source_policy(
                 f'site:{domain} "{row.Mfg_Part_Num.strip()}"', max_domain_searches
             )
         except Exception as error:
+            retrieval_failure_seen = True
             diagnostics.append(f"Domain-constrained search failed for {domain}: {error}")
             continue
 
@@ -170,7 +176,10 @@ def resolve_identity_and_source_policy(
             scoped_provider = enrichment_provider.with_approved_domains({domain})
             retrieval = scoped_provider.retrieve_source(url, row.Mfg_Part_Num)
             if not retrieval.success or retrieval.source is None:
-                diagnostics.append(retrieval.error or "Exact-MPN source verification failed.")
+                error_text = retrieval.error or "Exact-MPN source verification failed."
+                if _is_transport_retrieval_failure(error_text):
+                    retrieval_failure_seen = True
+                diagnostics.append(error_text)
                 continue
             source = retrieval.source
             try:
@@ -211,6 +220,11 @@ def resolve_identity_and_source_policy(
         state="unknown",
         reason="No candidate satisfied authority and exact-MPN verification.",
         diagnostics=diagnostics,
+        failure_code=(
+            "SOURCE_RETRIEVAL_FAILED"
+            if retrieval_failure_seen
+            else "NO_TRUSTWORTHY_SOURCE"
+        ),
     )
 
 
@@ -229,6 +243,7 @@ def _resolve_with_legacy_authority_verifier(
         return IdentityResolutionResult(
             state="unknown", reason="Runtime identity search failed; no policy was created.",
             diagnostics=[str(error) or "Search failed."],
+            failure_code="SOURCE_RETRIEVAL_FAILED",
         )
     for candidate in search_results:
         parsed = urlparse(candidate.url)
@@ -261,7 +276,45 @@ def _resolve_with_legacy_authority_verifier(
     return IdentityResolutionResult(
         state="unknown", reason="No candidate satisfied authority and exact-MPN verification.",
         diagnostics=diagnostics,
+        failure_code="NO_TRUSTWORTHY_SOURCE",
     )
+
+
+def _is_transport_retrieval_failure(error: str) -> bool:
+    """Recognize transport failures without treating verification failures as transport.
+
+    Exact-MPN mismatches, retailer rejection, and failed site-identity checks
+    are trustworthy-source decisions, not network failures.  This small
+    classifier is intentionally conservative and only covers errors produced
+    by the existing search/retrieval boundaries.
+    """
+    lowered = error.casefold()
+    transport_markers = (
+        "dns",
+        "name or service not known",
+        "getaddrinfo failed",
+        "socket",
+        "timed out",
+        "timeout",
+        "connection refused",
+        "connection reset",
+        "network is unreachable",
+        "temporary failure in name resolution",
+        "http status",
+        "source returned http",
+        "quota",
+        "rate limit",
+        "provider unavailable",
+        "retrieval failed",
+    )
+    verification_markers = (
+        "exact mpn was not found",
+        "exact mpn verification failed",
+        "exact part",
+    )
+    if any(marker in lowered for marker in verification_markers):
+        return False
+    return any(marker in lowered for marker in transport_markers)
 
 
 def _domain_candidates_from_search(

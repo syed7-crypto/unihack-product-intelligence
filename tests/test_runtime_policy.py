@@ -286,6 +286,41 @@ class RuntimePolicyTests(unittest.TestCase):
         self.assertEqual(result.row_results[0].review.status, "needs_review")
         self.assertEqual(result.delivery_rows[0]["Mfg_Part_Num"], "RUNTIME-1")
 
+    def test_completed_search_without_trustworthy_source_is_not_retrieval_failure(self) -> None:
+        result = resolve_identity_and_source_policy(
+            row(),
+            search_provider=InMemorySourceSearchProvider({"RUNTIME-1": []}),
+            enrichment_provider=self.provider([]),
+        )
+
+        self.assertEqual(result.state, "unknown")
+        self.assertEqual(result.failure_code, "NO_TRUSTWORTHY_SOURCE")
+
+    def test_transport_failure_is_reported_as_source_retrieval_failed(self) -> None:
+        url = "https://runtime.example/product/RUNTIME-1"
+
+        def failing_fetcher(_url: str, _timeout: float) -> RetrievedPayload:
+            raise TimeoutError("DNS lookup timed out")
+
+        result = run_catalogue_batch(
+            [row()], schema(), discovery_enabled=True,
+            runtime_policy_resolution_enabled=True,
+            search_provider=InMemorySourceSearchProvider({
+                'site:runtime.example "RUNTIME-1"': [SearchResult(url=url)]
+            }),
+            provider=ManufacturerEnrichmentProvider(fetcher=failing_fetcher),
+            runtime_candidate_domain_provider=lambda _row: [
+                RuntimeDomainCandidate(domain="runtime.example", identity_hint="Runtime")
+            ],
+        )
+
+        self.assertEqual(result.blocked_rows, 1)
+        self.assertIn(
+            "SOURCE_RETRIEVAL_FAILED",
+            {issue.issue.code for issue in result.review_issues},
+        )
+        self.assertEqual(result.delivery_rows[0]["Mfg_Part_Num"], "RUNTIME-1")
+
     def test_resolvable_runtime_policy_reaches_batch_enricher(self) -> None:
         url = "https://runtime.example/product/RUNTIME-1"
         captured: list[object] = []

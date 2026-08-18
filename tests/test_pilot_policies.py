@@ -188,7 +188,13 @@ class PilotPolicyTests(unittest.TestCase):
         policy = get_pilot_source_policy("PDSH4816AF")
         self.assertEqual(
             set(policy.model_dump()),
-            {"manufacturer_name", "approved_domains", "allowed_source_kinds", "query_templates"},
+            {
+                "manufacturer_name",
+                "approved_domains",
+                "source_role",
+                "allowed_source_kinds",
+                "query_templates",
+            },
         )
         self.assertNotIn("attribute", policy.model_dump_json().casefold())
         self.assertNotIn("delivery", policy.model_dump_json().casefold())

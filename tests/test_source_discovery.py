@@ -237,6 +237,35 @@ class SourceDiscoveryTests(unittest.TestCase):
         self.assertEqual(fetcher.call_count, 1)
         self.assertEqual(result.diagnostics[1].verification_status, "rejected")
 
+    def test_approved_secondary_source_is_distinguished_after_exact_verification(self) -> None:
+        secondary_url = "https://docs.hunterfan.com/59210"
+        search = InMemorySourceSearchProvider(
+            {"59210 Hunter Fan Company": [SearchResult(url=secondary_url, title="59210")]}
+        )
+        enrichment = ManufacturerEnrichmentProvider(
+            approved_domains={"docs.hunterfan.com"},
+            fetcher=lambda url, timeout: RetrievedPayload(
+                200,
+                {"content-type": "text/html"},
+                b"<h1>Hunter 59210</h1>",
+            ),
+        )
+
+        result = discover_and_verify_sources(
+            catalogue_row(),
+            ManufacturerSourcePolicy(
+                manufacturer_name="Hunter Fan Company",
+                approved_domains=("docs.hunterfan.com",),
+                source_role="secondary",
+                query_templates=("{part_number} {manufacturer}",),
+            ),
+            search,
+            enrichment,
+        )
+
+        self.assertEqual(len(result.verified_sources), 1)
+        self.assertEqual(result.diagnostics[0].verification_status, "verified_secondary")
+
     def test_discovery_never_calls_gemini(self) -> None:
         provider = InMemorySourceSearchProvider(
             {"59210 Hunter Fan Company": [SearchResult(url="https://hunterfan.com/59210")]}
