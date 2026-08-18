@@ -530,6 +530,7 @@ def discover_manufacturer_sources(
     *,
     manufacturer_reference: ReferenceResolutionResult | None = None,
     brand_reference: ReferenceResolutionResult | None = None,
+    verified_source_history=None,
     max_results_per_query: int = 10,
 ) -> SourceDiscoveryResult:
     """Search for candidates and apply policy metadata without verification."""
@@ -546,6 +547,26 @@ def discover_manufacturer_sources(
     errors: list[str] = []
     seen_urls: set[str] = set()
     manufacturer_hint = _resolved_value(manufacturer_reference) or policy.manufacturer_name
+
+    if verified_source_history is not None and manufacturer_hint:
+        for history_url in verified_source_history.candidate_urls(manufacturer_hint, policy):
+            if history_url in seen_urls:
+                continue
+            seen_urls.add(history_url)
+            candidates.append(
+                _candidate_from_result(
+                    SearchResult(
+                        url=history_url,
+                        title="Previously verified source",
+                        snippet="",
+                    ),
+                    "verified-source-history",
+                    len(candidates) + 1,
+                    catalogue_row.Mfg_Part_Num,
+                    policy,
+                    manufacturer_hint,
+                )
+            )
 
     for query in queries:
         try:
@@ -591,6 +612,7 @@ def discover_and_verify_sources(
     *,
     manufacturer_reference: ReferenceResolutionResult | None = None,
     brand_reference: ReferenceResolutionResult | None = None,
+    verified_source_history=None,
     max_results_per_query: int = 10,
 ) -> DiscoveredSourceVerificationResult:
     """Discover candidates, then verify only policy-approved URLs.
@@ -604,6 +626,7 @@ def discover_and_verify_sources(
         search_provider,
         manufacturer_reference=manufacturer_reference,
         brand_reference=brand_reference,
+        verified_source_history=verified_source_history,
         max_results_per_query=max_results_per_query,
     )
     verified_sources: list[ManufacturerSource] = []
@@ -635,6 +658,12 @@ def discover_and_verify_sources(
         )
         if retrieval.success and retrieval.source is not None:
             verified_sources.append(retrieval.source)
+            if verified_source_history is not None and policy.manufacturer_name:
+                verified_source_history.record_verified_source(
+                    policy.manufacturer_name,
+                    catalogue_row.Mfg_Part_Num,
+                    retrieval.source,
+                )
             diagnostics.append(
                 _diagnostic(
                     candidate,

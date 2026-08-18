@@ -78,6 +78,7 @@ from .manufacturer_enrichment import (
     RetrievedPayload,
     RetrievalResult,
 )
+from .source_history import VerifiedSourceHistory, VerifiedSourceRecord
 from .catalogue_enrichment import (
     AttributeDeliveryMapping,
     AttributeDeliveryMappings,
@@ -199,6 +200,8 @@ __all__ = [
     "ManufacturerSource",
     "RetrievedPayload",
     "RetrievalResult",
+    "VerifiedSourceHistory",
+    "VerifiedSourceRecord",
     "AttributeDeliveryMapping",
     "AttributeDeliveryMappings",
     "CatalogueEnrichmentError",
