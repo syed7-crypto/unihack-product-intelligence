@@ -30,6 +30,7 @@ SourceKind = Literal["webpage", "pdf", "unknown"]
 CandidateStatus = Literal["candidate", "rejected"]
 DiscoveryStatus = Literal["found", "no_candidates", "failed"]
 VerificationStatus = Literal["verified", "verified_secondary", "failed", "rejected"]
+DiscoveryFailureCode = Literal["SOURCE_RETRIEVAL_FAILED", "NO_TRUSTWORTHY_SOURCE"]
 
 
 class SearchProviderError(RuntimeError):
@@ -418,6 +419,7 @@ class SourceVerificationDiagnostic(BaseModel):
     policy_decision: CandidateStatus
     verification_status: VerificationStatus
     error: str | None = None
+    code: str | None = None
 
 
 class DiscoveredSourceVerificationResult(BaseModel):
@@ -427,6 +429,7 @@ class DiscoveredSourceVerificationResult(BaseModel):
     discovery: SourceDiscoveryResult
     verified_sources: list[ManufacturerSource] = Field(default_factory=list)
     diagnostics: list[SourceVerificationDiagnostic] = Field(default_factory=list)
+    failure_code: DiscoveryFailureCode | None = None
 
 
 class DiscoveryPilotRowResult(BaseModel):
@@ -631,6 +634,7 @@ def discover_and_verify_sources(
     )
     verified_sources: list[ManufacturerSource] = []
     diagnostics: list[SourceVerificationDiagnostic] = []
+    retrieval_failure_seen = False
     verification_provider = enrichment_provider.with_approved_domains(
         frozenset(policy.approved_domains)
     )
@@ -672,14 +676,34 @@ def discover_and_verify_sources(
                 )
             )
         else:
+            if retrieval.code in {
+                "SOURCE_RETRIEVAL_FAILED",
+                "SOURCE_HTTP_ERROR",
+                "SOURCE_EMPTY",
+                "SOURCE_UNSUPPORTED_TYPE",
+            }:
+                retrieval_failure_seen = True
             diagnostics.append(
-                _diagnostic(candidate, "failed", retrieval.error or "Source verification failed.")
+                _diagnostic(
+                    candidate,
+                    "failed",
+                    retrieval.error or "Source verification failed.",
+                    retrieval.code,
+                )
             )
+    failure_code = None
+    if not verified_sources:
+        failure_code = (
+            "SOURCE_RETRIEVAL_FAILED"
+            if discovery.status == "failed" or retrieval_failure_seen
+            else "NO_TRUSTWORTHY_SOURCE"
+        )
     return DiscoveredSourceVerificationResult(
         part_number=catalogue_row.Mfg_Part_Num,
         discovery=discovery,
         verified_sources=verified_sources,
         diagnostics=diagnostics,
+        failure_code=failure_code,
     )
 
 
@@ -751,6 +775,7 @@ def _diagnostic(
     candidate: DiscoveredSourceCandidate,
     verification_status: VerificationStatus,
     error: str | None,
+    code: str | None = None,
 ) -> SourceVerificationDiagnostic:
     return SourceVerificationDiagnostic(
         url=candidate.url,
@@ -761,4 +786,5 @@ def _diagnostic(
         policy_decision=candidate.status,
         verification_status=verification_status,
         error=error,
+        code=code,
     )

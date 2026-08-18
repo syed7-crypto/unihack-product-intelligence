@@ -84,7 +84,12 @@ def build_review_report(
         explicit_code = getattr(diagnostic, "code", None)
         if explicit_code:
             code = explicit_code
-            severity = "warning" if successful_sources else "blocking"
+            severity = (
+                "warning"
+                if explicit_code in {"NO_TRUSTWORTHY_SOURCE", "IDENTITY_UNRESOLVED"}
+                or successful_sources
+                else "blocking"
+            )
             scope = "source"
         else:
             code, severity, scope = _source_error_details(error, bool(successful_sources))

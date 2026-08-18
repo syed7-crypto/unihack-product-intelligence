@@ -117,6 +117,40 @@ class SourceDiscoveryTests(unittest.TestCase):
         self.assertEqual(failed.status, "failed")
         self.assertTrue(failed.errors)
 
+    def test_completed_search_without_trustworthy_source_has_explicit_code(self) -> None:
+        result = discover_and_verify_sources(
+            catalogue_row(),
+            self.policy(),
+            InMemorySourceSearchProvider({}),
+            ManufacturerEnrichmentProvider(),
+        )
+
+        self.assertEqual(result.failure_code, "NO_TRUSTWORTHY_SOURCE")
+
+    def test_search_provider_failure_has_retrieval_failure_code(self) -> None:
+        result = discover_and_verify_sources(
+            catalogue_row(),
+            self.policy(),
+            FailingSearchProvider(),
+            ManufacturerEnrichmentProvider(),
+        )
+
+        self.assertEqual(result.failure_code, "SOURCE_RETRIEVAL_FAILED")
+
+    def test_timeout_during_source_fetch_has_retrieval_failure_code(self) -> None:
+        url = "https://hunterfan.com/59210"
+        search = InMemorySourceSearchProvider(
+            {"59210 Hunter Fan Company": [SearchResult(url=url)]}
+        )
+        provider = ManufacturerEnrichmentProvider(
+            fetcher=lambda _url, _timeout: (_ for _ in ()).throw(TimeoutError("timed out"))
+        )
+
+        result = discover_and_verify_sources(catalogue_row(), self.policy(), search, provider)
+
+        self.assertEqual(result.failure_code, "SOURCE_RETRIEVAL_FAILED")
+        self.assertEqual(result.diagnostics[0].code, "SOURCE_RETRIEVAL_FAILED")
+
     def test_unresolved_manufacturer_does_not_invent_a_domain(self) -> None:
         policy = ManufacturerSourcePolicy(
             manufacturer_name=None,

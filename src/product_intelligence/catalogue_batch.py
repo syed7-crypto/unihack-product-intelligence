@@ -288,6 +288,7 @@ def _discover_for_row(
         EnrichmentSourceDiagnostic(
             url=item.url,
             success=False,
+            code=item.code,
             error=item.error
             or (
                 "Search candidate was rejected by the approved manufacturer-domain policy."
@@ -302,6 +303,7 @@ def _discover_for_row(
         EnrichmentSourceDiagnostic(
             url="",
             success=False,
+            code="SOURCE_RETRIEVAL_FAILED",
             error=error,
         )
         for error in verification.discovery.errors
@@ -312,7 +314,14 @@ def _discover_for_row(
             if verification.discovery.status != "failed"
             else "Source discovery failed without a verified manufacturer source."
         )
-        diagnostics.append(EnrichmentSourceDiagnostic(url="", success=False, error=reason))
+        diagnostics.append(
+            EnrichmentSourceDiagnostic(
+                url="",
+                success=False,
+                code=verification.failure_code or "NO_TRUSTWORTHY_SOURCE",
+                error=reason,
+            )
+        )
     return _DiscoveryOutcome(
         verification.verified_sources,
         diagnostics,
@@ -334,7 +343,14 @@ def _runtime_outcome(result: IdentityResolutionResult) -> _DiscoveryOutcome:
     if result.diagnostics:
         reason = f"{reason} {' | '.join(result.diagnostics)}"
     return _DiscoveryOutcome(
-        diagnostics=[EnrichmentSourceDiagnostic(url="", success=False, error=reason)],
+        diagnostics=[
+            EnrichmentSourceDiagnostic(
+                url="",
+                success=False,
+                code=result.failure_code or "IDENTITY_UNRESOLVED",
+                error=reason,
+            )
+        ],
         runtime_identity=result,
     )
 
