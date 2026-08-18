@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from typing import Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
@@ -174,7 +175,7 @@ def _validate_against_input(
             rejected.append(_rejected(attribute, "EVIDENCE_QUOTE_NOT_FOUND", "Evidence quote is not in the source."))
             accepted.append(_not_found(attribute))
             continue
-        if not attribute.value.strip() or not _quote_occurs_in_source(attribute.value, evidence.quote):
+        if not attribute.value.strip() or not _value_occurs_in_quote(attribute.value, evidence.quote):
             rejected.append(_rejected(attribute, "EVIDENCE_VALUE_NOT_IN_QUOTE", "The value is not supported by its evidence quote."))
             accepted.append(_not_found(attribute))
             continue
@@ -225,6 +226,26 @@ def _quote_occurs_in_source(quote: str, source_text: str) -> bool:
     """Allow harmless whitespace differences while requiring source support."""
     normalize = lambda text: re.sub(r"\s+", " ", text).strip().casefold()
     return normalize(quote) in normalize(source_text)
+
+
+def _normalize_evidence_value(value: str) -> str:
+    """Normalize only clearly equivalent evidence presentation formats.
+
+    This keeps words and digits intact while handling Unicode compatibility,
+    case, whitespace around slashes, and whitespace between a number and its
+    unit (for example ``120 V`` versus ``120V``). It is comparison-only and
+    never changes the stored value or quote.
+    """
+    normalized = unicodedata.normalize("NFKC", value).casefold().strip()
+    normalized = re.sub(r"\s*/\s*", "/", normalized)
+    normalized = re.sub(r"(?<=\d)\s+(?=[a-z°])", "", normalized)
+    return re.sub(r"\s+", " ", normalized)
+
+
+def _value_occurs_in_quote(value: str, quote: str) -> bool:
+    if _quote_occurs_in_source(value, quote):
+        return True
+    return _normalize_evidence_value(value) in _normalize_evidence_value(quote)
 
 
 def normalize_location_label(value: str) -> str:

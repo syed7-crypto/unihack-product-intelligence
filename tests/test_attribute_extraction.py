@@ -195,6 +195,42 @@ class AttributeExtractionTests(unittest.TestCase):
 
         self.assertEqual(result.attributes[0].value, " stainless steel ")
 
+    def test_numeric_value_unit_spacing_variation_is_accepted(self) -> None:
+        source = source_with_text("Voltage: 120 V")
+        schema = ProductIdentificationResult.model_validate(
+            {
+                "product_type": "Valve",
+                "product_category": "Valve",
+                "attributes": [{"name": "voltage", "label": "Voltage"}],
+            }
+        )
+        response = {
+            "attributes": [
+                found("voltage", "120V", "Voltage: 120 V"),
+            ]
+        }
+
+        result = extract_attribute_values(source, schema, FakeGeminiClient(json.dumps(response)))
+
+        self.assertEqual(result.attributes[0].status, "found")
+        self.assertEqual(result.attributes[0].value, "120V")
+
+    def test_different_numeric_value_is_still_rejected(self) -> None:
+        source = source_with_text("Voltage: 120 V")
+        schema = ProductIdentificationResult.model_validate(
+            {
+                "product_type": "Valve",
+                "product_category": "Valve",
+                "attributes": [{"name": "voltage", "label": "Voltage"}],
+            }
+        )
+        response = {"attributes": [found("voltage", "240V", "Voltage: 120 V")]}
+
+        result = extract_attribute_values(source, schema, FakeGeminiClient(json.dumps(response)))
+
+        self.assertEqual(result.attributes[0].status, "not_found")
+        self.assertEqual(result.rejected_attributes[0].code, "EVIDENCE_VALUE_NOT_IN_QUOTE")
+
     def test_invalid_txt_location_is_rejected(self) -> None:
         source = source_with_type("Material: Stainless Steel", "txt")
         schema = ProductIdentificationResult.model_validate(
