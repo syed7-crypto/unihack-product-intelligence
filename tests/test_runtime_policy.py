@@ -2,7 +2,7 @@ import unittest
 
 from src.product_intelligence.catalog_input import CatalogInputRow, INPUT_COLUMNS
 from src.product_intelligence.catalogue_batch import run_catalogue_batch
-from src.product_intelligence.catalogue_enrichment import CatalogueEnrichmentResult
+from src.product_intelligence.catalogue_enrichment import CatalogueEnrichmentResult, _resolve_references
 from src.product_intelligence.delivery_schema import DeliverySchema
 from src.product_intelligence.manufacturer_enrichment import (
     ManufacturerEnrichmentProvider,
@@ -11,6 +11,7 @@ from src.product_intelligence.manufacturer_enrichment import (
 from src.product_intelligence.reference_data import BrandReference, ManufacturerReference
 from src.product_intelligence.review import ReviewReport
 from src.product_intelligence.runtime_policy import (
+    IdentityResolutionResult,
     RuntimeDomainCandidate,
     RuntimeAuthorityEvidence,
     resolve_identity_and_source_policy,
@@ -40,6 +41,21 @@ class RuntimePolicyTests(unittest.TestCase):
             return RetrievedPayload(200, {"content-type": "text/html"}, body)
 
         return ManufacturerEnrichmentProvider(fetcher=fetcher)
+
+    def test_runtime_identity_resolves_without_copying_raw_manufacturer(self) -> None:
+        runtime = IdentityResolutionResult(
+            state="resolvable",
+            resolved_identity="Runtime Manufacturer",
+            identity_kind="manufacturer",
+            approved_domains=("runtime.example",),
+            reason="Test-only attestation.",
+        )
+        resolution = _resolve_references(row(), None, None, runtime)
+        self.assertEqual(resolution.manufacturer.status, "resolved")
+        self.assertEqual(resolution.manufacturer.resolved_value, "Runtime Manufacturer")
+        self.assertEqual(resolution.manufacturer.input_value, "Runtime Manufacturer")
+        self.assertNotEqual(resolution.manufacturer.resolved_value, row().Part_Manuf)
+        self.assertIsNotNone(resolution.runtime_identity)
 
     def test_known_manufacturer_resolves_without_search(self) -> None:
         search = InMemorySourceSearchProvider({})
@@ -273,9 +289,11 @@ class RuntimePolicyTests(unittest.TestCase):
     def test_resolvable_runtime_policy_reaches_batch_enricher(self) -> None:
         url = "https://runtime.example/product/RUNTIME-1"
         captured: list[object] = []
+        captured_identity: list[object] = []
 
         def enricher(catalogue_row, _urls, delivery_schema, **kwargs):
             captured.extend(kwargs.get("verified_sources") or ())
+            captured_identity.append(kwargs.get("runtime_identity"))
             return CatalogueEnrichmentResult(
                 catalogue_row=catalogue_row,
                 pipeline_result=None,
@@ -299,13 +317,17 @@ class RuntimePolicyTests(unittest.TestCase):
         self.assertEqual(result.ready_rows, 1)
         self.assertEqual(len(captured), 1)
         self.assertEqual(captured[0].url, url)
+        self.assertEqual(captured_identity[0].resolved_identity, "Runtime Manufacturer")
+        self.assertEqual(captured_identity[0].identity_kind, "manufacturer")
 
     def test_product_first_runtime_policy_reaches_batch_enricher(self) -> None:
         url = "https://runtime.example/product/RUNTIME-1"
         captured: list[object] = []
+        captured_identity: list[object] = []
 
         def enricher(catalogue_row, _urls, delivery_schema, **kwargs):
             captured.extend(kwargs.get("verified_sources") or ())
+            captured_identity.append(kwargs.get("runtime_identity"))
             return CatalogueEnrichmentResult(
                 catalogue_row=catalogue_row,
                 pipeline_result=None,
@@ -327,6 +349,8 @@ class RuntimePolicyTests(unittest.TestCase):
         )
         self.assertEqual(result.ready_rows, 1)
         self.assertEqual([source.url for source in captured], [url])
+        self.assertEqual(captured_identity[0].resolved_identity, "Hunter")
+        self.assertEqual(captured_identity[0].identity_kind, "manufacturer")
 
     def test_product_first_accepts_compact_brand_format_from_page_text(self) -> None:
         url = "https://milwaukeetool.example/product/RUNTIME-1"

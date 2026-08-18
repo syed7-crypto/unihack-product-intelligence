@@ -274,6 +274,8 @@ class UOMReference(_ExactReference):
 class CatalogReferenceResolution(BaseModel):
     """Reference outcomes for one raw catalogue row."""
 
+    runtime_identity: ReferenceResolutionResult | None = None
+
     manufacturer: ReferenceResolutionResult
     brands: dict[str, ReferenceResolutionResult]
 

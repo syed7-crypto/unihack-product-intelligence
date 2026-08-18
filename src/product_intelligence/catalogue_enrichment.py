@@ -36,6 +36,7 @@ from .reference_data import (
     normalize_reference_value,
 )
 from .review import ReviewReport, build_review_report
+from .runtime_policy import IdentityResolutionResult
 
 
 AttributeDeliveryMapping = ControlledAttributeMapping
@@ -113,6 +114,7 @@ def enrich_catalogue_row(
     expected_delivery_row: dict[str, str] | None = None,
     verified_sources: Sequence[ManufacturerSource] | None = None,
     initial_source_diagnostics: Sequence[EnrichmentSourceDiagnostic] = (),
+    runtime_identity: IdentityResolutionResult | None = None,
 ) -> CatalogueEnrichmentResult:
     """Enrich one row using only explicit, exact-MPN-verified sources.
 
@@ -127,7 +129,7 @@ def enrich_catalogue_row(
     mappings = attribute_mappings or AttributeDeliveryMappings()
     delivery_row = map_raw_fields_to_delivery(catalogue_row, delivery_schema)
     reference_resolution = _resolve_references(
-        catalogue_row, manufacturer_reference, brand_reference
+        catalogue_row, manufacturer_reference, brand_reference, runtime_identity
     )
     _map_resolved_identity(delivery_row, reference_resolution)
 
@@ -278,6 +280,7 @@ def _resolve_references(
     row: CatalogInputRow,
     manufacturer_reference: ManufacturerReference | None,
     brand_reference: BrandReference | None,
+    runtime_identity: IdentityResolutionResult | None = None,
 ) -> CatalogReferenceResolution:
     if manufacturer_reference is None:
         manufacturer = _unresolved("manufacturer", "No manufacturer reference was configured.")
@@ -294,7 +297,32 @@ def _resolve_references(
         if candidate is None:
             result = result.model_copy(update={"input_value": getattr(row, field)})
         brands[field] = result
-    return CatalogReferenceResolution(manufacturer=manufacturer, brands=brands)
+
+    trusted_runtime = None
+    if (
+        runtime_identity is not None
+        and runtime_identity.state in {"known", "resolvable"}
+        and runtime_identity.resolved_identity
+        and runtime_identity.identity_kind
+    ):
+        trusted_runtime = ReferenceResolutionResult(
+            input_value=runtime_identity.resolved_identity,
+            resolved_value=runtime_identity.resolved_identity,
+            status="resolved",
+            reference_type=runtime_identity.identity_kind,
+            reason=(
+                "Resolved from the current row's verified identity/source "
+                "resolution; not persisted to the reference registry."
+            ),
+        )
+        if runtime_identity.identity_kind == "manufacturer":
+            manufacturer = trusted_runtime
+
+    return CatalogReferenceResolution(
+        manufacturer=manufacturer,
+        brands=brands,
+        runtime_identity=trusted_runtime,
+    )
 
 
 def _unresolved(reference_type: str, reason: str) -> ReferenceResolutionResult:
@@ -310,12 +338,19 @@ def _unresolved(reference_type: str, reason: str) -> ReferenceResolutionResult:
 def _map_resolved_identity(
     delivery_row: dict[str, str], resolution: CatalogReferenceResolution
 ) -> None:
-    if resolution.manufacturer.status == "resolved":
+    if resolution.manufacturer.status == "resolved" and "MANUFACTURER_NAME" in delivery_row:
         delivery_row["MANUFACTURER_NAME"] = str(resolution.manufacturer.resolved_value)
     for result in resolution.brands.values():
-        if result.status == "resolved":
+        if result.status == "resolved" and "BRAND_NAME" in delivery_row:
             delivery_row["BRAND_NAME"] = str(result.resolved_value)
             break
+    if (
+        resolution.runtime_identity is not None
+        and resolution.runtime_identity.status == "resolved"
+        and resolution.runtime_identity.reference_type == "brand"
+        and "BRAND_NAME" in delivery_row
+    ):
+        delivery_row["BRAND_NAME"] = str(resolution.runtime_identity.resolved_value)
 
 
 def _map_verified_source_metadata(

@@ -7,6 +7,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from .catalog_input import is_placeholder_brand
 from .pipeline import ProductIntelligenceResult
 from .reference_data import CatalogReferenceResolution, ReferenceResolutionResult
 
@@ -108,7 +109,7 @@ def build_review_report(
                 )
             )
         for field, brand in reference_resolution.brands.items():
-            if brand.status != "resolved":
+            if brand.status != "resolved" and _brand_requires_review(brand):
                 add(
                     ReviewIssue(
                         code="BRAND_UNRESOLVED",
@@ -270,6 +271,12 @@ def _source_error_details(error: str, has_successful_source: bool) -> tuple[str,
         code = "SOURCE_RETRIEVAL_FAILED"
     severity: ReviewSeverity = "warning" if has_successful_source else "blocking"
     return code, severity, "source"
+
+
+def _brand_requires_review(brand: ReferenceResolutionResult) -> bool:
+    """Only review a brand candidate when the catalogue supplied one."""
+    value = brand.input_value
+    return bool(value and not is_placeholder_brand(value))
 
 
 def _pipeline_error_code(error: str) -> str:

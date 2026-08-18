@@ -148,6 +148,7 @@ def run_catalogue_batch(
                     expected_delivery_row=dict(expected) if expected is not None else None,
                     verified_sources=discovery.verified_sources,
                     initial_source_diagnostics=discovery.diagnostics,
+                    runtime_identity=discovery.runtime_identity,
                 )
             else:
                 result = enrich(
@@ -203,9 +204,11 @@ class _DiscoveryOutcome:
         self,
         verified_sources: Sequence[Any] = (),
         diagnostics: Sequence[EnrichmentSourceDiagnostic] = (),
+        runtime_identity: IdentityResolutionResult | None = None,
     ) -> None:
         self.verified_sources = list(verified_sources)
         self.diagnostics = list(diagnostics)
+        self.runtime_identity = runtime_identity
 
 
 def _discover_for_row(
@@ -302,7 +305,11 @@ def _discover_for_row(
             else "Source discovery failed without a verified manufacturer source."
         )
         diagnostics.append(EnrichmentSourceDiagnostic(url="", success=False, error=reason))
-    return _DiscoveryOutcome(verification.verified_sources, diagnostics)
+    return _DiscoveryOutcome(
+        verification.verified_sources,
+        diagnostics,
+        runtime_identity=None,
+    )
 
 
 def _runtime_outcome(result: IdentityResolutionResult) -> _DiscoveryOutcome:
@@ -310,12 +317,14 @@ def _runtime_outcome(result: IdentityResolutionResult) -> _DiscoveryOutcome:
         return _DiscoveryOutcome(
             verified_sources=result.verified_sources,
             diagnostics=[],
+            runtime_identity=result,
         )
     reason = f"Identity/source policy resolution UNKNOWN: {result.reason}"
     if result.diagnostics:
         reason = f"{reason} {' | '.join(result.diagnostics)}"
     return _DiscoveryOutcome(
-        diagnostics=[EnrichmentSourceDiagnostic(url="", success=False, error=reason)]
+        diagnostics=[EnrichmentSourceDiagnostic(url="", success=False, error=reason)],
+        runtime_identity=result,
     )
 
 
