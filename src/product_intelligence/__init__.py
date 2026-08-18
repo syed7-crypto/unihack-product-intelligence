@@ -57,6 +57,7 @@ from .delivery_output import (
     DeliveryFieldDifference,
     compare_delivery_rows,
     map_raw_fields_to_delivery,
+    map_verified_source_content_to_delivery,
 )
 from .reference_data import (
     AttributeReference,
@@ -81,6 +82,7 @@ from .manufacturer_enrichment import (
 from .source_history import VerifiedSourceHistory, VerifiedSourceRecord
 from .verified_source_content import (
     SourceLink,
+    StructuredProductData,
     VerifiedSourceContent,
     extract_verified_source_content,
 )
@@ -189,6 +191,7 @@ __all__ = [
     "DeliveryFieldDifference",
     "compare_delivery_rows",
     "map_raw_fields_to_delivery",
+    "map_verified_source_content_to_delivery",
     "AttributeReference",
     "AttributeRule",
     "BrandReference",
@@ -208,6 +211,7 @@ __all__ = [
     "VerifiedSourceHistory",
     "VerifiedSourceRecord",
     "SourceLink",
+    "StructuredProductData",
     "VerifiedSourceContent",
     "extract_verified_source_content",
     "AttributeDeliveryMapping",

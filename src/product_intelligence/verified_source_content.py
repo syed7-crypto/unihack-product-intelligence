@@ -41,6 +41,30 @@ class VerifiedSourceContent(BaseModel):
     image_urls: list[str] = Field(default_factory=list)
     document_urls: list[str] = Field(default_factory=list)
     video_urls: list[str] = Field(default_factory=list)
+    structured: "StructuredProductData" = Field(default_factory=lambda: StructuredProductData())
+
+
+class StructuredProductData(BaseModel):
+    """Directly labelled identifiers, measurements, and package facts."""
+
+    upc: str | None = None
+    ean: str | None = None
+    gtin: str | None = None
+    unspsc: str | None = None
+    length: str | None = None
+    length_uom: str | None = None
+    height: str | None = None
+    height_uom: str | None = None
+    width: str | None = None
+    width_uom: str | None = None
+    weight: str | None = None
+    weight_uom: str | None = None
+    volume: str | None = None
+    volume_uom: str | None = None
+    warranty: str | None = None
+    selling_qty: str | None = None
+    selling_uom: str | None = None
+    packaging_information: str | None = None
 
 
 class _Element:
@@ -71,6 +95,7 @@ class _ProductContentParser(HTMLParser):
         self.image_urls: list[str] = []
         self.document_urls: list[str] = []
         self.video_urls: list[str] = []
+        self.visible_text: list[str] = []
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         attributes = {key.casefold(): value or "" for key, value in attrs}
@@ -134,6 +159,7 @@ class _ProductContentParser(HTMLParser):
         clean = " ".join(data.split())
         if not clean:
             return
+        _append_unique(self.visible_text, clean)
         for element in self.stack:
             element.parts.append(clean)
 
@@ -184,6 +210,7 @@ def extract_verified_source_content(source: ManufacturerSource) -> VerifiedSourc
     parser = _ProductContentParser(source.url)
     parser.feed(payload)
     parser.close()
+    structured = _extract_structured_data("\n".join(parser.visible_text + parser.specification_text))
     return VerifiedSourceContent(
         canonical_url=source.url,
         source_type="web",
@@ -198,7 +225,56 @@ def extract_verified_source_content(source: ManufacturerSource) -> VerifiedSourc
         image_urls=parser.image_urls,
         document_urls=parser.document_urls,
         video_urls=parser.video_urls,
+        structured=structured,
     )
+
+
+_MEASUREMENT_PATTERN = re.compile(
+    r"(?i)\b(?P<label>length|height|width|weight|volume)\s*[:=-]\s*"
+    r"(?P<value>[-+]?\d+(?:\.\d+)?)\s*(?P<uom>mm|cm|m|km|in(?:ch(?:es)?)?|ft|feet|foot|mg|g|kg|lb(?:s)?|ml|l|gal)\b"
+)
+_IDENTIFIER_PATTERNS = {
+    "upc": re.compile(r"(?i)\bUPC\s*[:#-]?\s*([0-9][0-9 -]{5,})\b"),
+    "ean": re.compile(r"(?i)\bEAN\s*[:#-]?\s*([0-9][0-9 -]{7,})\b"),
+    "gtin": re.compile(r"(?i)\bGTIN\s*[:#-]?\s*([0-9][0-9 -]{7,})\b"),
+    "unspsc": re.compile(r"(?i)\bUNSPSC\s*[:#-]?\s*([0-9][0-9 -]{7,})\b"),
+}
+
+
+def _extract_structured_data(text: str) -> StructuredProductData:
+    """Extract only facts with explicit, deterministic field labels."""
+    values: dict[str, str | None] = {}
+    for name, pattern in _IDENTIFIER_PATTERNS.items():
+        match = pattern.search(text)
+        if match:
+            values[name] = _compact_identifier(match.group(1))
+
+    for match in _MEASUREMENT_PATTERN.finditer(text):
+        label = match.group("label").casefold()
+        if label not in values:
+            values[label] = match.group("value")
+            values[f"{label}_uom"] = match.group("uom")
+
+    values["warranty"] = _labelled_text(text, "warranty")
+    values["selling_qty"] = _labelled_text(text, "selling quantity|selling qty|pack quantity|package quantity")
+    if values.get("selling_qty"):
+        quantity_match = re.match(r"(?i)\s*([0-9]+(?:\.\d+)?)\s*(.*)", values["selling_qty"] or "")
+        if quantity_match:
+            values["selling_qty"] = quantity_match.group(1)
+            values["selling_uom"] = quantity_match.group(2).strip() or None
+    values["packaging_information"] = _labelled_text(
+        text, "standard packaging information|packaging information|packaging"
+    )
+    return StructuredProductData(**values)
+
+
+def _labelled_text(text: str, labels: str) -> str | None:
+    match = re.search(rf"(?im)^\s*(?:{labels})\s*[:=-]\s*(.+?)\s*$", text)
+    return match.group(1).strip() if match else None
+
+
+def _compact_identifier(value: str) -> str:
+    return re.sub(r"\s+", "", value).replace("-", "")
 
 
 def _context_for(tag: str, tokens: str, parent: str | None) -> str | None:

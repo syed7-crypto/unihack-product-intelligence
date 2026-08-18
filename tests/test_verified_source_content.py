@@ -96,6 +96,45 @@ class VerifiedSourceContentTests(unittest.TestCase):
                 exact_mpn_verified=False,
             )
 
+    def test_extracts_explicit_structured_fields_without_guessing(self) -> None:
+        html = """
+        <html><body>
+          <h1>MODEL-123</h1>
+          <p>UPC: 012345678905</p>
+          <p>EAN: 4006381333931</p>
+          <p>GTIN: 00012345600012</p>
+          <p>UNSPSC: 24111503</p>
+          <p>Length: 10 in</p>
+          <p>Height: 20 cm</p>
+          <p>Width: 3.5 ft</p>
+          <p>Weight: 4.5 lb</p>
+          <p>Volume: 2 L</p>
+          <p>Warranty: 5 years limited</p>
+          <p>Selling Quantity: 4 each</p>
+          <p>Standard Packaging Information: Four units per carton</p>
+        </body></html>
+        """
+
+        result = extract_verified_source_content(verified_source(html))
+
+        self.assertEqual(result.structured.upc, "012345678905")
+        self.assertEqual(result.structured.ean, "4006381333931")
+        self.assertEqual(result.structured.gtin, "00012345600012")
+        self.assertEqual(result.structured.unspsc, "24111503")
+        self.assertEqual(result.structured.length, "10")
+        self.assertEqual(result.structured.length_uom, "in")
+        self.assertEqual(result.structured.height, "20")
+        self.assertEqual(result.structured.height_uom, "cm")
+        self.assertEqual(result.structured.weight, "4.5")
+        self.assertEqual(result.structured.weight_uom, "lb")
+        self.assertEqual(result.structured.warranty, "5 years limited")
+        self.assertEqual(result.structured.selling_qty, "4")
+        self.assertEqual(result.structured.selling_uom, "each")
+        self.assertEqual(
+            result.structured.packaging_information,
+            "Four units per carton",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

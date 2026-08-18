@@ -18,13 +18,18 @@ from .controlled_attribute_mapping import (
     ControlledAttributeMapping,
     ControlledAttributeMappingRegistry,
 )
-from .delivery_output import compare_delivery_rows, map_raw_fields_to_delivery
+from .delivery_output import (
+    compare_delivery_rows,
+    map_raw_fields_to_delivery,
+    map_verified_source_content_to_delivery,
+)
 from .delivery_schema import DeliverySchema
 from .manufacturer_enrichment import (
     ManufacturerEnrichmentProvider,
     ManufacturerSource,
     RetrievalResult,
 )
+from .verified_source_content import extract_verified_source_content
 from .pipeline import ProductIntelligencePipelineError, ProductIntelligenceResult, run_pipeline
 from .reference_data import (
     AttributeReference,
@@ -136,6 +141,7 @@ def enrich_catalogue_row(
     _map_resolved_identity(delivery_row, reference_resolution)
 
     normalized_sources = []
+    verified_source_contents = []
     diagnostics: list[EnrichmentSourceDiagnostic] = list(initial_source_diagnostics)
 
     for source in verified_sources or ():
@@ -167,6 +173,20 @@ def enrich_catalogue_row(
             )
             continue
         normalized_sources.append(normalized)
+        try:
+            verified_source_contents.append(extract_verified_source_content(source))
+        except Exception as error:
+            diagnostics.append(
+                EnrichmentSourceDiagnostic(
+                    url=source.url,
+                    success=False,
+                    source_type=source.source_type,
+                    source_name=source.source_name,
+                    exact_mpn_verified=source.exact_mpn_verified,
+                    code="SOURCE_CONTENT_EXTRACTION_FAILED",
+                    error=f"Verified-source content extraction failed: {error}",
+                )
+            )
         diagnostics.append(
             EnrichmentSourceDiagnostic(
                 url=source.url,
@@ -219,6 +239,20 @@ def enrich_catalogue_row(
             )
             continue
         normalized_sources.append(normalized)
+        try:
+            verified_source_contents.append(extract_verified_source_content(source))
+        except Exception as error:
+            diagnostics.append(
+                EnrichmentSourceDiagnostic(
+                    url=url,
+                    success=False,
+                    source_type=source.source_type,
+                    source_name=source.source_name,
+                    exact_mpn_verified=source.exact_mpn_verified,
+                    code="SOURCE_CONTENT_EXTRACTION_FAILED",
+                    error=f"Verified-source content extraction failed: {error}",
+                )
+            )
         diagnostics.append(
             EnrichmentSourceDiagnostic(
                 url=url,
@@ -228,6 +262,12 @@ def enrich_catalogue_row(
                 source_name=normalized.source_name,
                 exact_mpn_verified=source.exact_mpn_verified,
             )
+        )
+
+    _map_verified_source_metadata(delivery_row, diagnostics, catalogue_row)
+    for content in verified_source_contents:
+        map_verified_source_content_to_delivery(
+            delivery_row, content, delivery_schema, uom_reference=uom_reference
         )
 
     if not normalized_sources:
@@ -283,7 +323,6 @@ def enrich_catalogue_row(
             delivery_schema,
         )
 
-    _map_verified_source_metadata(delivery_row, diagnostics, catalogue_row)
     mapping_diagnostics = _map_validated_attributes(
         delivery_row,
         pipeline_result,
