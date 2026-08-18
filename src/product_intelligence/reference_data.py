@@ -159,6 +159,14 @@ class AttributeRule(BaseModel):
     label: str = Field(min_length=1)
     allowed_values: tuple[str, ...] = ()
     allowed_uoms: tuple[str, ...] = ()
+    value_kind: Literal["lov", "numeric", "free_form"] | None = None
+
+    @property
+    def requires_lov(self) -> bool:
+        """Empty allowed values mean free-form unless explicitly marked LOV."""
+        return self.value_kind == "lov" or (
+            self.value_kind is None and bool(self.allowed_values)
+        )
 
 
 class AttributeReference:
@@ -213,13 +221,21 @@ class AttributeReference:
                 reference_type="attribute_value",
                 reason="No controlled reference exists for this category and attribute.",
             )
+        if not rule.requires_lov:
+            return ReferenceResolutionResult(
+                input_value=value,
+                resolved_value=value,
+                status="resolved",
+                reference_type="attribute_value",
+                reason="The attribute is numeric/free-form and does not require an LOV.",
+            )
         if not rule.allowed_values:
             return ReferenceResolutionResult(
                 input_value=value,
                 resolved_value=None,
                 status="unresolved",
                 reference_type="attribute_value",
-                reason="The attribute has no controlled allowed-value list.",
+                reason="The LOV attribute has no controlled allowed-value list.",
             )
         lookup = {normalize_reference_value(item): item for item in rule.allowed_values}
         resolved = lookup.get(normalize_reference_value(value))

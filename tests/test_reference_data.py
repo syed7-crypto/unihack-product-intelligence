@@ -119,6 +119,25 @@ class ReferenceDataTests(unittest.TestCase):
         self.assertEqual(result.status, "invalid")
         self.assertIsNone(result.resolved_value)
 
+    def test_numeric_or_free_form_attribute_without_lov_is_not_unresolved(self) -> None:
+        attributes = AttributeReference(
+            {"Valve": {"Length": AttributeRule(label="Length", value_kind="numeric")}}
+        )
+
+        result = attributes.validate_value("Valve", "Length", "25.4")
+
+        self.assertEqual(result.status, "resolved")
+        self.assertEqual(result.resolved_value, "25.4")
+
+    def test_explicit_lov_without_values_remains_unresolved(self) -> None:
+        attributes = AttributeReference(
+            {"Valve": {"Finish": AttributeRule(label="Finish", value_kind="lov")}}
+        )
+
+        result = attributes.validate_value("Valve", "Finish", "Polished")
+
+        self.assertEqual(result.status, "unresolved")
+
     def test_approved_uom_and_explicit_alias(self) -> None:
         result = MOCK_UOMS.resolve("volt")
 

@@ -81,7 +81,13 @@ def build_review_report(
     ]
     for diagnostic in failed_sources:
         error = str(getattr(diagnostic, "error", None) or "Source retrieval failed.")
-        code, severity, scope = _source_error_details(error, bool(successful_sources))
+        explicit_code = getattr(diagnostic, "code", None)
+        if explicit_code:
+            code = explicit_code
+            severity = "warning" if successful_sources else "blocking"
+            scope = "source"
+        else:
+            code, severity, scope = _source_error_details(error, bool(successful_sources))
         add(
             ReviewIssue(
                 code=code,
@@ -134,6 +140,18 @@ def build_review_report(
         )
 
     if pipeline_result is not None:
+        for diagnostic in pipeline_result.diagnostics:
+            add(
+                ReviewIssue(
+                    code=diagnostic.code,
+                    severity="blocking",
+                    scope="source",
+                    message=diagnostic.message,
+                    source_id=diagnostic.source_id,
+                    source_name=diagnostic.source_name,
+                    affects_delivery=True,
+                )
+            )
         for extraction in pipeline_result.extracted_attributes:
             for rejected in extraction.rejected_attributes:
                 add(
@@ -196,7 +214,12 @@ def build_review_report(
                 continue
             attribute_name = getattr(diagnostic, "attribute_name", None)
             reason = str(getattr(diagnostic, "reason", "Mapping was skipped."))
-            code, severity = _mapping_issue_details(reason)
+            explicit_code = getattr(diagnostic, "code", None)
+            code, severity = (
+                (explicit_code, "blocking")
+                if explicit_code and explicit_code not in {"ATTRIBUTE_NOT_FOUND"}
+                else _mapping_issue_details(reason)
+            )
             if code is not None:
                 current_value = _validated_value(pipeline_result, attribute_name)
                 add(

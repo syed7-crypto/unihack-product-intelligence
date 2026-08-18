@@ -96,6 +96,48 @@ class ManufacturerEnrichmentTests(unittest.TestCase):
         self.assertIn("Exact MPN", result.error or "")
         self.assertIsNone(result.source)
 
+    def test_safe_mpn_format_normalization_accepts_unicode_and_controlled_separators(self) -> None:
+        provider = ManufacturerEnrichmentProvider(
+            fetcher=lambda url, timeout: payload(b"<h1>s03 05226 is</h1>")
+        )
+
+        result = provider.retrieve_source(
+            WEB_URL,
+            "S03‑05226‑IS",
+        )
+
+        self.assertTrue(result.success)
+
+    def test_redirected_final_url_must_remain_on_approved_https_domain(self) -> None:
+        provider = ManufacturerEnrichmentProvider(
+            fetcher=lambda url, timeout: RetrievedPayload(
+                200,
+                {"content-type": "text/html"},
+                b"<h1>PDSH4816AF</h1>",
+                "https://example.com/redirected",
+            )
+        )
+
+        result = provider.retrieve_source(WEB_URL, MPN)
+
+        self.assertFalse(result.success)
+        self.assertEqual(result.code, "SOURCE_REDIRECT_NOT_APPROVED")
+
+    def test_redirected_final_url_must_remain_https(self) -> None:
+        provider = ManufacturerEnrichmentProvider(
+            fetcher=lambda url, timeout: RetrievedPayload(
+                200,
+                {"content-type": "text/html"},
+                b"<h1>PDSH4816AF</h1>",
+                "http://www.frigidaire.com/redirected",
+            )
+        )
+
+        result = provider.retrieve_source(WEB_URL, MPN)
+
+        self.assertFalse(result.success)
+        self.assertEqual(result.code, "SOURCE_REDIRECT_NOT_APPROVED")
+
     def test_mpn_absent_and_empty_response_are_explicit_failures(self) -> None:
         for response in (payload(b"<p>Other product</p>"), payload(b"")):
             provider = ManufacturerEnrichmentProvider(fetcher=lambda url, timeout, r=response: r)

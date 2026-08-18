@@ -28,6 +28,8 @@ from .pipeline import (
     SourceSummary,
     run_pipeline,
 )
+from .diagnostics import Diagnostic
+from .mpn_normalization import normalize_mpn
 from .gemini_client import GeminiTransientError, TRANSIENT_RETRY_DELAYS_SECONDS
 from .unit_normalization import (
     NormalizedMeasurement,
@@ -158,6 +160,8 @@ __all__ = [
     "ProductIntelligenceResult",
     "SourceSummary",
     "run_pipeline",
+    "Diagnostic",
+    "normalize_mpn",
     "GeminiTransientError",
     "TRANSIENT_RETRY_DELAYS_SECONDS",
     "NormalizedMeasurement",

@@ -89,6 +89,11 @@ class GeminiAttributeExtractionResult(BaseModel):
 class AttributeExtractionError(RuntimeError):
     """Raised when Gemini output is malformed or unsupported by the source."""
 
+    def __init__(self, message: str, code: str = "ATTRIBUTE_EXTRACTION_FAILED") -> None:
+        self.code = code
+        self.message = message
+        super().__init__(message)
+
 
 class StructuredGeminiClient(Protocol):
     """Minimal Gemini interface used by this stage and its unit tests."""
@@ -125,14 +130,19 @@ def extract_attribute_values(
         return result
     except ValidationError as error:
         raise AttributeExtractionError(
-            "Gemini returned attribute values that failed validation."
+            "Gemini returned attribute values that failed validation.",
+            "ATTRIBUTE_RESPONSE_INVALID",
         ) from error
     except (TypeError, ValueError, RuntimeError) as error:
         raise AttributeExtractionError(
-            "Gemini did not return valid source-backed attribute values."
+            "Gemini did not return valid source-backed attribute values.",
+            "ATTRIBUTE_EXTRACTION_INVALID",
         ) from error
     except Exception as error:
-        raise AttributeExtractionError("Gemini attribute extraction request failed.") from error
+        raise AttributeExtractionError(
+            "Gemini attribute extraction request failed.",
+            "ATTRIBUTE_EXTRACTION_REQUEST_FAILED",
+        ) from error
 
 
 def _validate_against_input(

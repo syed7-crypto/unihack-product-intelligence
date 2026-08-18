@@ -25,7 +25,7 @@ from .manufacturer_enrichment import (
     ManufacturerSource,
     RetrievalResult,
 )
-from .pipeline import ProductIntelligenceResult, run_pipeline
+from .pipeline import ProductIntelligencePipelineError, ProductIntelligenceResult, run_pipeline
 from .reference_data import (
     AttributeReference,
     BrandReference,
@@ -54,6 +54,7 @@ class EnrichmentSourceDiagnostic(BaseModel):
     source_name: str | None = None
     exact_mpn_verified: bool = False
     error: str | None = None
+    code: str | None = None
 
 
 class MappingDiagnostic(BaseModel):
@@ -63,6 +64,7 @@ class MappingDiagnostic(BaseModel):
     slot: int | None = None
     status: Literal["mapped", "skipped"]
     reason: str
+    code: str | None = None
 
 
 class EvaluationFieldDifference(BaseModel):
@@ -144,6 +146,7 @@ def enrich_catalogue_row(
                     success=False,
                     source_type=source.source_type,
                     source_name=source.source_name,
+                    code="SOURCE_NOT_EXACT_MPN_VERIFIED",
                     error="Source was not marked as exact-MPN-verified.",
                 )
             )
@@ -158,6 +161,7 @@ def enrich_catalogue_row(
                     source_type=source.source_type,
                     source_name=source.source_name,
                     exact_mpn_verified=source.exact_mpn_verified,
+                    code="SOURCE_NORMALIZATION_FAILED",
                     error=f"Source normalization failed: {error}",
                 )
             )
@@ -182,6 +186,7 @@ def enrich_catalogue_row(
                     url=url,
                     success=False,
                     error=retrieval.error or "Source retrieval failed.",
+                    code=retrieval.code or "SOURCE_RETRIEVAL_FAILED",
                 )
             )
             continue
@@ -193,6 +198,7 @@ def enrich_catalogue_row(
                     success=False,
                     source_type=source.source_type,
                     source_name=source.source_name,
+                    code="SOURCE_NOT_EXACT_MPN_VERIFIED",
                     error="Source was not marked as exact-MPN-verified.",
                 )
             )
@@ -207,6 +213,7 @@ def enrich_catalogue_row(
                     source_type=source.source_type,
                     source_name=source.source_name,
                     exact_mpn_verified=source.exact_mpn_verified,
+                    code="SOURCE_NORMALIZATION_FAILED",
                     error=f"Source normalization failed: {error}",
                 )
             )
@@ -237,12 +244,32 @@ def enrich_catalogue_row(
 
     try:
         pipeline_result = run_pipeline(normalized_sources, client=client)
+    except ProductIntelligencePipelineError as error:
+        diagnostics.append(
+            EnrichmentSourceDiagnostic(
+                url=";".join(source_urls),
+                success=False,
+                code=error.code,
+                error=f"Pipeline failed after source verification: {error}",
+            )
+        )
+        return _finish_result(
+            catalogue_row,
+            delivery_row,
+            diagnostics,
+            reference_resolution,
+            [],
+            None,
+            expected_delivery_row,
+            delivery_schema,
+        )
     except Exception as error:
         diagnostics.append(
             EnrichmentSourceDiagnostic(
                 url=";".join(source_urls),
                 success=False,
-                error=f"Pipeline failed after source verification: {_pipeline_error_message(error)}",
+                code="PIPELINE_FAILED",
+                error=f"Pipeline failed after source verification: {error}",
             )
         )
         return _finish_result(
@@ -389,10 +416,10 @@ def _map_validated_attributes(
         mapping = mappings.resolve(attribute.name, category=category)
         canonical_name = mapping.canonical_name if mapping is not None else attribute.name
         if attribute.status == "not_found":
-            diagnostics.append(_skipped_for_attribute(attribute.name, None, "The attribute was not found in the sources."))
+            diagnostics.append(_skipped_for_attribute(attribute.name, None, "The attribute was not found in the sources.", "ATTRIBUTE_NOT_FOUND"))
             continue
         if attribute.status == "conflict":
-            diagnostics.append(_skipped_for_attribute(attribute.name, None, "Conflicting source values require review."))
+            diagnostics.append(_skipped_for_attribute(attribute.name, None, "Conflicting source values require review.", "ATTRIBUTE_CONFLICT"))
             continue
         confidence = next(
             (item for item in pipeline_result.confidence.attributes if item.name == attribute.name),
@@ -400,10 +427,10 @@ def _map_validated_attributes(
         )
         minimum_confidence = mapping.minimum_confidence_level if mapping is not None else "medium"
         if confidence is not None and _confidence_below(confidence.level, minimum_confidence):
-            diagnostics.append(_skipped_for_attribute(attribute.name, None, "Confidence is below the controlled mapping threshold; the attribute requires review."))
+            diagnostics.append(_skipped_for_attribute(attribute.name, None, "Confidence is below the controlled mapping threshold; the attribute requires review.", "LOW_CONFIDENCE"))
             continue
         if not attribute.values:
-            diagnostics.append(_skipped_for_attribute(attribute.name, None, "No validated source value was available."))
+            diagnostics.append(_skipped_for_attribute(attribute.name, None, "No validated source value was available.", "EVIDENCE_MISSING"))
             continue
 
         value = attribute.values[0].value
@@ -415,7 +442,8 @@ def _map_validated_attributes(
         if attribute_reference is not None:
             value_result = attribute_reference.validate_value(category, reference_name, delivery_value)
             if value_result.status != "resolved":
-                diagnostics.append(_skipped_for_attribute(attribute.name, None, value_result.reason))
+                code = "ATTRIBUTE_REFERENCE_MISSING" if value_result.status == "unresolved" else "ATTRIBUTE_VALUE_NOT_APPROVED"
+                diagnostics.append(_skipped_for_attribute(attribute.name, None, value_result.reason, code))
                 continue
 
         delivery_uom = ""
@@ -423,7 +451,7 @@ def _map_validated_attributes(
             if uom_reference is not None:
                 uom_result = uom_reference.resolve(delivery_uom_reference)
                 if uom_result.status != "resolved":
-                    diagnostics.append(_skipped_for_attribute(attribute.name, None, uom_result.reason))
+                    diagnostics.append(_skipped_for_attribute(attribute.name, None, uom_result.reason, "UOM_NOT_APPROVED"))
                     continue
                 allowed_uoms = (
                     attribute_reference.allowed_uoms(category, reference_name)
@@ -432,7 +460,7 @@ def _map_validated_attributes(
                 if allowed_uoms and normalize_reference_value(str(uom_result.resolved_value)) not in {
                     normalize_reference_value(item) for item in allowed_uoms
                 }:
-                    diagnostics.append(_skipped_for_attribute(attribute.name, None, "The UOM is not approved for this attribute."))
+                    diagnostics.append(_skipped_for_attribute(attribute.name, None, "The UOM is not approved for this attribute.", "UOM_NOT_APPROVED"))
                     continue
                 delivery_uom = str(uom_result.resolved_value)
             else:
@@ -443,7 +471,7 @@ def _map_validated_attributes(
                 if allowed_uoms and normalize_reference_value(delivery_uom_reference) not in {
                     normalize_reference_value(item) for item in allowed_uoms
                 }:
-                    diagnostics.append(_skipped_for_attribute(attribute.name, None, "The UOM is not approved for this attribute."))
+                    diagnostics.append(_skipped_for_attribute(attribute.name, None, "The UOM is not approved for this attribute.", "UOM_NOT_APPROVED"))
                     continue
                 # No UOM reference means there is no approved canonical UOM
                 # to substitute. Preserve the declared source wording only
@@ -479,6 +507,7 @@ def _map_validated_attributes(
             canonical_name,
             None,
             "ATTRIBUTE_SLOT_LIMIT_EXCEEDED: more than 50 validated attributes are available.",
+            "ATTRIBUTE_SLOT_LIMIT_EXCEEDED",
         ))
     return diagnostics
 
@@ -508,12 +537,14 @@ def _skipped_for_attribute(
     attribute_name: str,
     slot: int | None,
     reason: str,
+    code: str | None = None,
 ) -> MappingDiagnostic:
     return MappingDiagnostic(
         attribute_name=attribute_name,
         slot=slot,
         status="skipped",
         reason=reason,
+        code=code,
     )
 
 

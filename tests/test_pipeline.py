@@ -153,6 +153,28 @@ class PipelineTests(unittest.TestCase):
             ["industrial_valve.txt", "industrial_valve.json", "industrial_valve.pdf"],
         )
 
+    def test_one_source_extraction_failure_does_not_discard_other_sources(self) -> None:
+        txt = extract_file(SAMPLES / "industrial_valve.txt")
+        pdf = extract_file(SAMPLES / "industrial_valve.pdf")
+        client = SequentialGeminiClient(
+            [
+                IDENTIFICATION_RESPONSE,
+                {"attributes": []},
+                extraction_response(pdf),
+            ]
+        )
+
+        result = run_pipeline(
+            [SAMPLES / "industrial_valve.txt", SAMPLES / "industrial_valve.pdf"],
+            client,
+        )
+
+        self.assertEqual(len(result.extracted_attributes), 1)
+        self.assertEqual(result.extracted_attributes[0].attributes[0].name, "pressure_rating")
+        self.assertEqual(len(result.diagnostics), 1)
+        self.assertEqual(result.diagnostics[0].code, "ATTRIBUTE_RESPONSE_INVALID")
+        self.assertEqual(result.diagnostics[0].source_name, txt.source_name)
+
     def test_missing_attribute_flows_to_validation_and_confidence(self) -> None:
         txt = extract_file(SAMPLES / "industrial_valve.txt")
         identification = {

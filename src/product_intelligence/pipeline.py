@@ -19,6 +19,7 @@ from .cross_source_validation import (
     CrossSourceValidationResult,
     validate_cross_source,
 )
+from .diagnostics import Diagnostic
 from .extraction import ExtractionError, NormalizedSource, extract_file
 from .gemini_client import create_gemini_client
 from .product_identification import (
@@ -47,10 +48,16 @@ class ProductIntelligenceResult(BaseModel):
     extracted_attributes: list[AttributeExtractionResult] = Field(min_length=1)
     validation: CrossSourceValidationResult
     confidence: ConfidenceScoringResult
+    diagnostics: list[Diagnostic] = Field(default_factory=list)
 
 
 class ProductIntelligencePipelineError(RuntimeError):
     """Raised when a pipeline stage fails with an actionable stage name."""
+
+    def __init__(self, message: str, code: str = "PIPELINE_FAILED", diagnostics=None) -> None:
+        self.code = code
+        self.diagnostics = list(diagnostics or ())
+        super().__init__(message)
 
 
 def run_pipeline(
@@ -80,15 +87,28 @@ def run_pipeline(
             "Could not initialize the product intelligence pipeline."
         ) from error
 
-    try:
-        extracted_attributes = [
-            extract_attribute_values(source, product_identification, gemini_client)
-            for source in sources
-        ]
-    except AttributeExtractionError as error:
+    extracted_attributes: list[AttributeExtractionResult] = []
+    diagnostics: list[Diagnostic] = []
+    for source in sources:
+        try:
+            extracted_attributes.append(
+                extract_attribute_values(source, product_identification, gemini_client)
+            )
+        except AttributeExtractionError as error:
+            diagnostics.append(
+                Diagnostic(
+                    code=error.code,
+                    message=error.message,
+                    source_id=source.source_id,
+                    source_name=source.source_name,
+                )
+            )
+    if not extracted_attributes:
         raise ProductIntelligencePipelineError(
-            "Attribute value extraction failed."
-        ) from error
+            "Attribute value extraction failed.",
+            "ATTRIBUTE_EXTRACTION_FAILED",
+            diagnostics,
+        )
 
     try:
         validation = validate_cross_source(extracted_attributes, product_identification)
@@ -105,6 +125,7 @@ def run_pipeline(
         extracted_attributes=extracted_attributes,
         validation=validation,
         confidence=confidence,
+        diagnostics=diagnostics,
     )
 
 

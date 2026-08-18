@@ -23,6 +23,7 @@ from urllib.request import Request, urlopen
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .extraction import ExtractionError, NormalizedSource, SourceLocation, extract_pdf
+from .mpn_normalization import normalize_mpn
 
 
 ManufacturerSourceType = Literal["web", "pdf"]
@@ -55,6 +56,7 @@ class RetrievalResult(BaseModel):
     success: bool
     source: ManufacturerSource | None = None
     error: str | None = None
+    code: str | None = None
 
     @model_validator(mode="after")
     def validate_result(self) -> "RetrievalResult":
@@ -74,6 +76,7 @@ class RetrievedPayload:
     status_code: int
     headers: Mapping[str, str]
     body: bytes
+    final_url: str | None = None
 
 
 class SourceFetcher(Protocol):
@@ -122,49 +125,57 @@ class ManufacturerEnrichmentProvider:
     def retrieve_source(self, url: str, expected_mpn: str) -> RetrievalResult:
         """Fetch and verify one explicitly approved manufacturer URL."""
         try:
-            domain = _approved_domain(url, self.approved_domains)
+            try:
+                domain = _approved_domain(url, self.approved_domains)
+            except ValueError as error:
+                return _failure(str(error), "SOURCE_DOMAIN_NOT_APPROVED")
             if not expected_mpn.strip():
-                return _failure("An expected MPN is required.")
+                return _failure("An expected MPN is required.", "MPN_MISSING")
 
             payload = self._fetcher(url, self.timeout)
+            final_url = payload.final_url or url
+            try:
+                final_domain = _approved_domain(final_url, self.approved_domains)
+            except ValueError as error:
+                return _failure(str(error), "SOURCE_REDIRECT_NOT_APPROVED")
             if payload.status_code < 200 or payload.status_code >= 300:
-                return _failure(f"Source returned HTTP status {payload.status_code}.")
+                return _failure(f"Source returned HTTP status {payload.status_code}.", "SOURCE_HTTP_ERROR")
             if not payload.body:
-                return _failure("Source returned an empty response.")
+                return _failure("Source returned an empty response.", "SOURCE_EMPTY")
 
-            source_type = _source_type(url, payload.headers, payload.body)
+            source_type = _source_type(final_url, payload.headers, payload.body)
             if source_type is None:
-                return _failure("Source content is not a supported HTML page or PDF.")
+                return _failure("Source content is not a supported HTML page or PDF.", "SOURCE_UNSUPPORTED_TYPE")
 
             if source_type == "pdf":
                 content_for_check = payload.body.decode("latin-1", errors="ignore")
                 if not _contains_exact_mpn(content_for_check, expected_mpn):
                     # PDF text is not reliably represented in raw bytes. The
                     # existing PDF extractor is the authoritative text check.
-                    source = _pdf_source_from_bytes(url, domain, payload.body)
+                    source = _pdf_source_from_bytes(final_url, final_domain, payload.body)
                     if not _contains_exact_mpn(source.extracted_text, expected_mpn):
-                        return _failure("Exact MPN was not found in the PDF.")
+                        return _failure("Exact MPN was not found in the PDF.", "EXACT_MPN_MISMATCH")
                 else:
-                    source = _pdf_source_from_bytes(url, domain, payload.body)
+                    source = _pdf_source_from_bytes(final_url, final_domain, payload.body)
                     if not _contains_exact_mpn(source.extracted_text, expected_mpn):
-                        return _failure("Exact MPN was not found in the PDF text.")
+                        return _failure("Exact MPN was not found in the PDF text.", "EXACT_MPN_MISMATCH")
                 content: str | bytes = payload.body
             else:
                 text, title, headings = _extract_html_text(payload.body)
                 if not text:
-                    return _failure("HTML source did not contain readable text.")
+                    return _failure("HTML source did not contain readable text.", "SOURCE_EMPTY")
                 if not _contains_exact_mpn(text, expected_mpn):
-                    return _failure("Exact MPN was not found in the HTML source.")
-                source_name = title or _url_source_name(url)
-                source = _web_source(url, source_name, text, headings)
+                    return _failure("Exact MPN was not found in the HTML source.", "EXACT_MPN_MISMATCH")
+                source_name = title or _url_source_name(final_url)
+                source = _web_source(final_url, source_name, text, headings)
                 # Retain the retrieved payload so a later conversion can
                 # recover the page title and heading-based locations.
                 content = payload.body
 
             manufacturer_source = ManufacturerSource(
-                url=url,
+                url=final_url,
                 source_type=source_type,
-                manufacturer_domain=domain,
+                manufacturer_domain=final_domain,
                 source_name=source.source_name,
                 content=content,
                 exact_mpn_verified=True,
@@ -214,7 +225,7 @@ def _fetch_url(url: str, timeout: float) -> RetrievedPayload:
     request = Request(url, headers={"User-Agent": "UniHackProductIntelligence/1.0"})
     with urlopen(request, timeout=timeout) as response:  # nosec B310: URL is allowlisted first
         headers = {key.casefold(): value for key, value in response.headers.items()}
-        return RetrievedPayload(response.status, headers, response.read())
+        return RetrievedPayload(response.status, headers, response.read(), response.geturl())
 
 
 def _source_type(
@@ -229,8 +240,10 @@ def _source_type(
 
 
 def _contains_exact_mpn(text: str, expected_mpn: str) -> bool:
-    pattern = rf"(?<![A-Za-z0-9]){re.escape(expected_mpn.strip())}(?![A-Za-z0-9])"
-    return re.search(pattern, text, flags=re.IGNORECASE) is not None
+    normalized_text = normalize_mpn(text)
+    normalized_mpn = normalize_mpn(expected_mpn)
+    pattern = rf"(?<![a-z0-9]){re.escape(normalized_mpn)}(?![a-z0-9])"
+    return re.search(pattern, normalized_text) is not None
 
 
 def _pdf_source_from_bytes(url: str, domain: str, content: bytes) -> NormalizedSource:
@@ -315,5 +328,5 @@ def _extract_html_text(payload: bytes) -> tuple[str, str, list[str]]:
     return "\n".join(parser.parts), " ".join(parser.title_parts), parser.headings
 
 
-def _failure(message: str) -> RetrievalResult:
-    return RetrievalResult(success=False, error=message)
+def _failure(message: str, code: str = "SOURCE_RETRIEVAL_FAILED") -> RetrievalResult:
+    return RetrievalResult(success=False, error=message, code=code)
