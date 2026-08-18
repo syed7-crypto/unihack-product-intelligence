@@ -111,6 +111,30 @@ class VerifiedContentDeliveryTests(unittest.TestCase):
         self.assertEqual(result["SDS"], "")
         self.assertEqual(result["Video Link"], "")
 
+    def test_populated_fields_retain_source_provenance(self) -> None:
+        schema = DeliverySchema(DELIVERY_FIELDS)
+        content = VerifiedSourceContent(
+            canonical_url="https://manufacturer.example/product/MODEL-123",
+            source_type="web",
+            source_id="source-123",
+            source_name="product-page.html",
+            locations=["document"],
+            product_name="Example Product",
+            features=["Feature one"],
+        )
+        provenance = {}
+
+        result = map_verified_source_content_to_delivery(
+            schema.empty_row(), content, schema, provenance=provenance
+        )
+
+        self.assertEqual(result["Product Name"], "Example Product")
+        self.assertEqual(provenance["Product Name"].source_id, "source-123")
+        self.assertEqual(provenance["Product Name"].source_name, "product-page.html")
+        self.assertEqual(provenance["Product Name"].location, "document")
+        self.assertEqual(provenance["Product Name"].quote, "Example Product")
+        self.assertEqual(provenance["ITEM_FEATURES_1"].quote, "Feature one")
+
     def test_structured_fields_require_approved_uoms(self) -> None:
         schema = DeliverySchema(DELIVERY_FIELDS)
         content = VerifiedSourceContent(

@@ -20,6 +20,7 @@ from .controlled_attribute_mapping import (
 )
 from .delivery_output import (
     compare_delivery_rows,
+    DeliveryFieldEvidence,
     map_raw_fields_to_delivery,
     map_verified_source_content_to_delivery,
 )
@@ -95,6 +96,7 @@ class CatalogueEnrichmentResult(BaseModel):
     catalogue_row: CatalogInputRow
     pipeline_result: ProductIntelligenceResult | None
     delivery_row: dict[str, str]
+    delivery_evidence: dict[str, DeliveryFieldEvidence] = Field(default_factory=dict)
     source_diagnostics: list[EnrichmentSourceDiagnostic] = Field(default_factory=list)
     reference_resolution: CatalogReferenceResolution | None = None
     mapping_diagnostics: list[MappingDiagnostic] = Field(default_factory=list)
@@ -142,6 +144,7 @@ def enrich_catalogue_row(
 
     normalized_sources = []
     verified_source_contents = []
+    delivery_evidence: dict[str, DeliveryFieldEvidence] = {}
     diagnostics: list[EnrichmentSourceDiagnostic] = list(initial_source_diagnostics)
 
     for source in verified_sources or ():
@@ -174,7 +177,7 @@ def enrich_catalogue_row(
             continue
         normalized_sources.append(normalized)
         try:
-            verified_source_contents.append(extract_verified_source_content(source))
+            verified_source_contents.append(extract_verified_source_content(source, normalized))
         except Exception as error:
             diagnostics.append(
                 EnrichmentSourceDiagnostic(
@@ -240,7 +243,7 @@ def enrich_catalogue_row(
             continue
         normalized_sources.append(normalized)
         try:
-            verified_source_contents.append(extract_verified_source_content(source))
+            verified_source_contents.append(extract_verified_source_content(source, normalized))
         except Exception as error:
             diagnostics.append(
                 EnrichmentSourceDiagnostic(
@@ -267,7 +270,11 @@ def enrich_catalogue_row(
     _map_verified_source_metadata(delivery_row, diagnostics, catalogue_row)
     for content in verified_source_contents:
         map_verified_source_content_to_delivery(
-            delivery_row, content, delivery_schema, uom_reference=uom_reference
+            delivery_row,
+            content,
+            delivery_schema,
+            uom_reference=uom_reference,
+            provenance=delivery_evidence,
         )
 
     if not normalized_sources:
@@ -280,6 +287,7 @@ def enrich_catalogue_row(
             None,
             expected_delivery_row,
             delivery_schema,
+            delivery_evidence,
         )
 
     try:
@@ -302,6 +310,7 @@ def enrich_catalogue_row(
             None,
             expected_delivery_row,
             delivery_schema,
+            delivery_evidence,
         )
     except Exception as error:
         diagnostics.append(
@@ -321,6 +330,7 @@ def enrich_catalogue_row(
             None,
             expected_delivery_row,
             delivery_schema,
+            delivery_evidence,
         )
 
     mapping_diagnostics = _map_validated_attributes(
@@ -339,6 +349,7 @@ def enrich_catalogue_row(
         pipeline_result,
         expected_delivery_row,
         delivery_schema,
+        delivery_evidence,
     )
 
 
@@ -606,6 +617,7 @@ def _finish_result(
     pipeline_result: ProductIntelligenceResult | None,
     expected_delivery_row: dict[str, str] | None,
     schema: DeliverySchema,
+    delivery_evidence: dict[str, DeliveryFieldEvidence] | None = None,
 ) -> CatalogueEnrichmentResult:
     evaluation = None
     if expected_delivery_row is not None:
@@ -626,6 +638,7 @@ def _finish_result(
         catalogue_row=row,
         pipeline_result=pipeline_result,
         delivery_row=schema.validate_row(delivery_row),
+        delivery_evidence=delivery_evidence or {},
         source_diagnostics=source_diagnostics,
         reference_resolution=reference_resolution,
         mapping_diagnostics=mapping_diagnostics,

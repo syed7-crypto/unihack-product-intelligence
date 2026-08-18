@@ -29,6 +29,18 @@ class DeliveryComparison(BaseModel):
     differences: list[DeliveryFieldDifference] = Field(default_factory=list)
 
 
+class DeliveryFieldEvidence(BaseModel):
+    """Provenance retained for one populated factual delivery field."""
+
+    field: str
+    value: str
+    source_id: str
+    source_name: str
+    location: str
+    quote: str
+    source_url: str
+
+
 def map_raw_fields_to_delivery(
     input_row: CatalogInputRow,
     schema: DeliverySchema,
@@ -47,6 +59,7 @@ def map_verified_source_content_to_delivery(
     content: VerifiedSourceContent,
     schema: DeliverySchema,
     uom_reference: UOMReference | None = None,
+    provenance: dict[str, DeliveryFieldEvidence] | None = None,
 ) -> dict[str, str]:
     """Map only explicitly extracted source content into known delivery fields.
 
@@ -91,6 +104,8 @@ def map_verified_source_content_to_delivery(
         _set_if_present(delivery_row, schema, "Video Link" if index == 0 else "Video Link 1", video_url)
 
     _map_structured_fields(delivery_row, content, schema, uom_reference)
+    if provenance is not None:
+        _record_content_provenance(delivery_row, content, schema, provenance)
 
     return schema.validate_row(delivery_row)
 
@@ -166,6 +181,81 @@ def _resolve_uom(value: str | None, reference: UOMReference | None) -> str | Non
     if result.status != "resolved" or not isinstance(result.resolved_value, str):
         return None
     return result.resolved_value
+
+
+def _record_content_provenance(
+    delivery_row: dict[str, str],
+    content: VerifiedSourceContent,
+    schema: DeliverySchema,
+    provenance: dict[str, DeliveryFieldEvidence],
+) -> None:
+    source_id = content.source_id or content.canonical_url
+    source_name = content.source_name or content.canonical_url
+    location = content.locations[0] if content.locations else "document"
+
+    def record(field: str, quote: str | None = None) -> None:
+        value = delivery_row.get(field, "")
+        if field not in schema.columns or not value or field in provenance:
+            return
+        provenance[field] = DeliveryFieldEvidence(
+            field=field,
+            value=value,
+            source_id=source_id,
+            source_name=source_name,
+            location=location,
+            quote=quote or value,
+            source_url=content.canonical_url,
+        )
+
+    for field, quote in (
+        ("MFR URL", content.canonical_url),
+        ("Product Name", content.product_name),
+        ("MARKETING_DESCRIPTION", content.description),
+        ("UPC", content.structured.upc),
+        ("EAN", content.structured.ean),
+        ("GTIN", content.structured.gtin),
+        ("UNSPSC", content.structured.unspsc),
+        ("Warranty", content.structured.warranty),
+        ("Standard Packaging Information", content.structured.packaging_information),
+    ):
+        if quote:
+            record(field, quote)
+
+    for index, feature in enumerate(content.features[:20], start=1):
+        record(f"ITEM_FEATURES_{index}", feature)
+    for index, link in enumerate(content.links[:5], start=1):
+        record(f"Ref URL {index}", link.text or link.url)
+    if content.image_urls:
+        record("Product Image", content.image_urls[0])
+        for index, image_url in enumerate(content.image_urls[1:5], start=1):
+            record(f"Alternate Image {index}", image_url)
+        record("Actual Image (Yes/No)", "Image URL was present in the verified source.")
+    for field, links in _document_links(content):
+        for link in links:
+            target = field
+            if field == "SDS" and target in provenance:
+                target = "SDS_1"
+            record(target, link.text or link.url)
+    for index, video_url in enumerate(content.video_urls[:2]):
+        record("Video Link" if index == 0 else "Video Link 1", video_url)
+    for dimension in ("length", "height", "width", "weight", "volume"):
+        value = getattr(content.structured, dimension)
+        uom = getattr(content.structured, f"{dimension}_uom")
+        if value and uom:
+            record(dimension.upper(), f"{dimension.title()}: {value} {uom}")
+            record(f"{dimension.upper()}_UOM", uom)
+    if content.structured.selling_qty and content.structured.selling_uom:
+        record("Selling Qty", f"Selling Quantity: {content.structured.selling_qty} {content.structured.selling_uom}")
+        record("Selling UOM", content.structured.selling_uom)
+
+
+def _document_links(content: VerifiedSourceContent) -> list[tuple[str, list[SourceLink]]]:
+    groups: dict[str, list[SourceLink]] = {}
+    for link in content.links:
+        field = _document_field(link)
+        if field is not None:
+            groups.setdefault(field, []).append(link)
+    return list(groups.items())
 
 
 def compare_delivery_rows(

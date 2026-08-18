@@ -12,6 +12,7 @@ from urllib.parse import urljoin, urlparse
 from pydantic import BaseModel, Field
 
 from .manufacturer_enrichment import ManufacturerSource
+from .extraction import NormalizedSource
 
 
 ContentSourceType = Literal["web", "pdf"]
@@ -30,6 +31,9 @@ class VerifiedSourceContent(BaseModel):
 
     canonical_url: str
     source_type: ContentSourceType
+    source_id: str | None = None
+    source_name: str | None = None
+    locations: list[str] = Field(default_factory=list)
     page_title: str | None = None
     product_name: str | None = None
     manufacturer_brand_text: str | None = None
@@ -186,7 +190,10 @@ class _ProductContentParser(HTMLParser):
             _append_unique(self.video_urls, url)
 
 
-def extract_verified_source_content(source: ManufacturerSource) -> VerifiedSourceContent:
+def extract_verified_source_content(
+    source: ManufacturerSource,
+    normalized_source: NormalizedSource | None = None,
+) -> VerifiedSourceContent:
     """Extract structured fields from a source already verified by the provider."""
     if not source.exact_mpn_verified:
         raise ValueError("Source content extraction requires exact-MPN verification.")
@@ -199,6 +206,9 @@ def extract_verified_source_content(source: ManufacturerSource) -> VerifiedSourc
         return VerifiedSourceContent(
             canonical_url=source.url,
             source_type="pdf",
+            source_id=normalized_source.source_id if normalized_source else None,
+            source_name=normalized_source.source_name if normalized_source else source.source_name,
+            locations=[location.label for location in normalized_source.locations] if normalized_source else [],
             specification_text=[normalized.extracted_text] if normalized.extracted_text else [],
         )
     if isinstance(source.content, bytes):
@@ -214,6 +224,9 @@ def extract_verified_source_content(source: ManufacturerSource) -> VerifiedSourc
     return VerifiedSourceContent(
         canonical_url=source.url,
         source_type="web",
+        source_id=normalized_source.source_id if normalized_source else None,
+        source_name=normalized_source.source_name if normalized_source else source.source_name,
+        locations=[location.label for location in normalized_source.locations] if normalized_source else [],
         page_title=parser.page_title,
         product_name=parser.product_name,
         manufacturer_brand_text=parser.manufacturer_brand_text,

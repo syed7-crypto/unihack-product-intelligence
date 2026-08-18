@@ -54,6 +54,7 @@ from .delivery_schema import (
 )
 from .delivery_output import (
     DeliveryComparison,
+    DeliveryFieldEvidence,
     DeliveryFieldDifference,
     compare_delivery_rows,
     map_raw_fields_to_delivery,
@@ -188,6 +189,7 @@ __all__ = [
     "load_delivery_schema",
     "select_delivery_row",
     "DeliveryComparison",
+    "DeliveryFieldEvidence",
     "DeliveryFieldDifference",
     "compare_delivery_rows",
     "map_raw_fields_to_delivery",
