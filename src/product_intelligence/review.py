@@ -108,7 +108,12 @@ def build_review_report(
 
     if reference_resolution is not None:
         manufacturer = reference_resolution.manufacturer
-        if manufacturer.status != "resolved":
+        trusted_brand_identity = (
+            reference_resolution.runtime_identity is not None
+            and reference_resolution.runtime_identity.status == "resolved"
+            and reference_resolution.runtime_identity.reference_type == "brand"
+        )
+        if manufacturer.status != "resolved" and not trusted_brand_identity:
             add(
                 ReviewIssue(
                     code="MANUFACTURER_UNRESOLVED",
