@@ -190,6 +190,7 @@ class PilotPolicyTests(unittest.TestCase):
             set(policy.model_dump()),
             {
                 "manufacturer_name",
+                "identity_kind",
                 "approved_domains",
                 "source_role",
                 "allowed_source_kinds",

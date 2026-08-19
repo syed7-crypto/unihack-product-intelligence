@@ -351,6 +351,7 @@ class ManufacturerSourcePolicy(BaseModel):
     """Explicit policy for which discovered candidates may be verified."""
 
     manufacturer_name: str | None = None
+    identity_kind: Literal["manufacturer", "brand"] = "manufacturer"
     approved_domains: tuple[str, ...] = ()
     source_role: Literal["manufacturer", "secondary"] = "manufacturer"
     allowed_source_kinds: tuple[SourceKind, ...] = ("webpage", "pdf")

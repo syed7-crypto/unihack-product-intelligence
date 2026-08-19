@@ -107,7 +107,7 @@ def resolve_identity_and_source_policy(
         return IdentityResolutionResult(
             state="known",
             resolved_identity=known.manufacturer_name,
-            identity_kind="manufacturer",
+            identity_kind=known.identity_kind,
             approved_domains=known.approved_domains,
             reason="A controlled manufacturer/brand policy was resolved.",
         )

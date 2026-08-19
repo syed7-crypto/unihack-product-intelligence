@@ -102,7 +102,7 @@ def build_review_report(
                 source_id=getattr(diagnostic, "source_id", None),
                 source_name=getattr(diagnostic, "source_name", None),
                 current_value=error,
-                affects_delivery=True,
+                affects_delivery=not bool(successful_sources),
             )
         )
 
@@ -149,12 +149,12 @@ def build_review_report(
             add(
                 ReviewIssue(
                     code=diagnostic.code,
-                    severity="blocking",
+                    severity="warning" if pipeline_result.extracted_attributes else "blocking",
                     scope="source",
                     message=diagnostic.message,
                     source_id=diagnostic.source_id,
                     source_name=diagnostic.source_name,
-                    affects_delivery=True,
+                    affects_delivery=not bool(pipeline_result.extracted_attributes),
                 )
             )
         for extraction in pipeline_result.extracted_attributes:
@@ -349,14 +349,20 @@ def _validated_value(pipeline_result: ProductIntelligenceResult, name: str | Non
 
 
 def _report_status(issues: list[ReviewIssue]) -> ReviewStatusValue:
-    delivery_issues = [issue for issue in issues if issue.affects_delivery]
-    if any(issue.severity == "error" for issue in delivery_issues):
+    # Attribute-level failures describe fields omitted from delivery; they do
+    # not invalidate independently verified product/source fields.  Row/source
+    # issues remain the status gate, and exact-MPN/no-source failures therefore
+    # continue to block fail-closed.
+    row_source_issues = [
+        issue for issue in issues
+        if issue.affects_delivery and issue.scope in {"row", "source"}
+    ]
+    if any(issue.severity == "error" for issue in row_source_issues):
         return "failed"
     if any(
-        issue.severity == "blocking" and issue.scope in {"row", "source"}
-        for issue in delivery_issues
+        issue.severity == "blocking" for issue in row_source_issues
     ):
         return "blocked"
-    if delivery_issues:
+    if row_source_issues:
         return "needs_review"
     return "ready"

@@ -57,6 +57,7 @@ class ControlledSourcePolicy(BaseModel):
         """Convert governance metadata to the existing discovery contract."""
         return ManufacturerSourcePolicy(
             manufacturer_name=self.controlled_identity,
+            identity_kind=self.identity_kind,
             approved_domains=self.approved_domains,
             allowed_source_kinds=self.allowed_source_kinds,
             query_templates=self.query_templates,

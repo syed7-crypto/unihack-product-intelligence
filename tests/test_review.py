@@ -154,7 +154,7 @@ class ReviewLayerTests(unittest.TestCase):
         self.assertEqual(report.status, "blocked")
         self.assertEqual(sum(issue.scope == "source" for issue in report.issues), 2)
 
-    def test_one_failed_source_with_one_valid_source_needs_review(self) -> None:
+    def test_one_failed_optional_source_with_one_valid_source_remains_ready(self) -> None:
         report = build_review_report(
             pipeline_result=None,
             source_diagnostics=[
@@ -166,7 +166,7 @@ class ReviewLayerTests(unittest.TestCase):
             evaluation_comparison=None,
         )
 
-        self.assertEqual(report.status, "needs_review")
+        self.assertEqual(report.status, "ready")
         issue = next(issue for issue in report.issues if issue.code == "EXACT_MPN_MISMATCH")
         self.assertEqual(issue.severity, "warning")
 
@@ -204,7 +204,7 @@ class ReviewLayerTests(unittest.TestCase):
         codes = {issue.code for issue in report.issues}
         self.assertIn("ATTRIBUTE_CONFLICT", codes)
         self.assertIn("LOW_CONFIDENCE", codes)
-        self.assertEqual(report.status, "needs_review")
+        self.assertEqual(report.status, "ready")
 
     def test_unsupported_uom_blocks_attribute_but_missing_fixed_slot_does_not(self) -> None:
         result = pipeline_result()
@@ -225,7 +225,7 @@ class ReviewLayerTests(unittest.TestCase):
 
         codes = {issue.code for issue in report.issues}
         self.assertIn("UOM_NOT_APPROVED", codes)
-        self.assertEqual(report.status, "needs_review")
+        self.assertEqual(report.status, "ready")
 
         missing_mapping = build_review_report(
             pipeline_result=result,
@@ -292,7 +292,7 @@ class ReviewLayerTests(unittest.TestCase):
 
         issue = next(issue for issue in report.issues if issue.code == "EVIDENCE_VALUE_NOT_IN_QUOTE")
         self.assertEqual(issue.scope, "attribute")
-        self.assertEqual(report.status, "needs_review")
+        self.assertEqual(report.status, "ready")
         self.assertEqual(result.validation.attributes[0].name, "pressure_rating")
 
     def test_evaluation_differences_are_non_delivery_issues(self) -> None:

@@ -11,6 +11,7 @@ from src.product_intelligence.manufacturer_enrichment import (
 from src.product_intelligence.review import ReviewIssue, ReviewReport
 from src.product_intelligence.source_discovery import (
     InMemorySourceSearchProvider,
+    ManufacturerSourcePolicy,
     SearchResult,
 )
 
@@ -38,6 +39,7 @@ def boundary_enricher(captured: dict[str, object]):
         captured[catalogue_row.Mfg_Part_Num] = {
             "sources": sources,
             "diagnostics": diagnostics,
+            "runtime_identity": kwargs.get("runtime_identity"),
         }
         delivery = delivery_schema.empty_row()
         if sources:
@@ -94,6 +96,37 @@ class CatalogueBatchDiscoveryTests(unittest.TestCase):
         self.assertEqual(result.ready_rows, 1)
         self.assertEqual(fetched, [official])
         self.assertEqual([source.url for source in captured["59210"]["sources"]], [official])
+
+    def test_controlled_policy_identity_is_handed_to_row_enrichment(self) -> None:
+        official = "https://manufacturer.example/products/GENERIC-1"
+        search = InMemorySourceSearchProvider(
+            {
+                "GENERIC-1": [SearchResult(url=official)],
+                "GENERIC-1 Example Brand": [SearchResult(url=official)],
+            }
+        )
+        captured: dict[str, object] = {}
+        policy = ManufacturerSourcePolicy(
+            manufacturer_name="Example Brand",
+            identity_kind="brand",
+            approved_domains=("manufacturer.example",),
+        )
+
+        result = run_catalogue_batch(
+            [row("GENERIC-1")],
+            schema(),
+            discovery_enabled=True,
+            discovery_policy_resolver=lambda _row: policy,
+            search_provider=search,
+            provider=self.provider([], b"<h1>Example Brand GENERIC-1</h1>"),
+            row_enricher=boundary_enricher(captured),
+        )
+
+        self.assertEqual(result.ready_rows, 1)
+        identity = captured["GENERIC-1"]["runtime_identity"]
+        self.assertEqual(identity.resolved_identity, "Example Brand")
+        self.assertEqual(identity.identity_kind, "brand")
+        self.assertEqual(len(captured["GENERIC-1"]["sources"]), 1)
 
     def test_unapproved_and_retailer_results_never_reach_retrieval_or_evidence(self) -> None:
         official = "https://www.hunterfan.com/59210"

@@ -325,7 +325,14 @@ def _discover_for_row(
     return _DiscoveryOutcome(
         verification.verified_sources,
         diagnostics,
-        runtime_identity=None,
+        runtime_identity=IdentityResolutionResult(
+            state="known",
+            resolved_identity=policy.manufacturer_name,
+            identity_kind=policy.identity_kind,
+            approved_domains=policy.approved_domains,
+            reason="A controlled source policy supplied the verified identity for this row.",
+            verified_sources=list(verification.verified_sources),
+        ),
     )
 
 
