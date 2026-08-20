@@ -86,7 +86,11 @@ def build_review_report(
             code = explicit_code
             severity = (
                 "warning"
-                if explicit_code in {"NO_TRUSTWORTHY_SOURCE", "IDENTITY_UNRESOLVED"}
+                if explicit_code in {
+                    "NO_TRUSTWORTHY_SOURCE",
+                    "IDENTITY_UNRESOLVED",
+                    "CANDIDATE_PLAUSIBLE",
+                }
                 or successful_sources
                 else "blocking"
             )
@@ -102,7 +106,11 @@ def build_review_report(
                 source_id=getattr(diagnostic, "source_id", None),
                 source_name=getattr(diagnostic, "source_name", None),
                 current_value=error,
-                affects_delivery=not bool(successful_sources),
+                affects_delivery=(
+                    True
+                    if explicit_code == "CANDIDATE_PLAUSIBLE"
+                    else not bool(successful_sources)
+                ),
             )
         )
 

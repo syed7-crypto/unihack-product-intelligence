@@ -286,6 +286,112 @@ class RuntimePolicyTests(unittest.TestCase):
         self.assertEqual(result.row_results[0].review.status, "needs_review")
         self.assertEqual(result.delivery_rows[0]["Mfg_Part_Num"], "RUNTIME-1")
 
+    def test_runtime_queries_include_manufacturer_and_brand_for_philips(self) -> None:
+        catalogue = row("576512")
+        catalogue.Part_Manuf = "Phillips Lighting (5831)"
+        catalogue.DIB_Brand = "Philips"
+        search = InMemorySourceSearchProvider({})
+
+        result = resolve_identity_and_source_policy(
+            catalogue,
+            search_provider=search,
+            enrichment_provider=self.provider([]),
+        )
+
+        self.assertEqual(result.state, "unknown")
+        self.assertEqual(
+            [query for query, _limit in search.queries],
+            ["576512 Phillips Lighting", "576512 Philips", "576512"],
+        )
+
+    def test_runtime_queries_include_manufacturer_for_festool(self) -> None:
+        catalogue = row("578808")
+        catalogue.Part_Manuf = "Festool USA (FESTO)"
+        search = InMemorySourceSearchProvider({})
+
+        resolve_identity_and_source_policy(
+            catalogue,
+            search_provider=search,
+            enrichment_provider=self.provider([]),
+        )
+
+        self.assertEqual(
+            [query for query, _limit in search.queries],
+            ["578808 Festool USA", "578808"],
+        )
+
+    def test_runtime_query_falls_back_to_mpn_without_identity(self) -> None:
+        catalogue = row("NO-IDENTITY")
+        catalogue.Part_Manuf = ""
+        search = InMemorySourceSearchProvider({})
+
+        resolve_identity_and_source_policy(
+            catalogue,
+            search_provider=search,
+            enrichment_provider=self.provider([]),
+        )
+
+        self.assertEqual([query for query, _limit in search.queries], ["NO-IDENTITY"])
+
+    def test_runtime_ranking_skips_conflicting_candidate_before_domain_fetch(self) -> None:
+        catalogue = row("COLLISION-2")
+        catalogue.Part_Manuf = ""
+        catalogue.E1_Brand = "United"
+        catalogue.Part_Desc = "6068L Gliding Patio Door"
+        bad_url = "https://bad.example/collections/accessories?mpn=COLLISION-2"
+        good_url = "https://good.example/products/COLLISION-2"
+        search = InMemorySourceSearchProvider({
+            "COLLISION-2 United": [
+                SearchResult(url=bad_url, title="Ariat Flag Cap COLLISION-2")
+            ],
+            "COLLISION-2": [
+                SearchResult(url=good_url, title="United 6068L Patio Door COLLISION-2")
+            ],
+            'site:good.example "COLLISION-2"': [SearchResult(url=good_url)],
+        })
+        fetched: list[str] = []
+
+        def fetcher(url: str, timeout: float) -> RetrievedPayload:
+            fetched.append(url)
+            return RetrievedPayload(
+                200,
+                {"content-type": "text/html"},
+                b"<h1>United 6068L Gliding Patio Door COLLISION-2</h1>",
+            )
+
+        result = resolve_identity_and_source_policy(
+            catalogue,
+            search_provider=search,
+            enrichment_provider=ManufacturerEnrichmentProvider(fetcher=fetcher),
+            site_identity_verifier=lambda _row, _candidate, source, text: RuntimeAuthorityEvidence(
+                controlled_identity="United",
+                identity_kind="manufacturer",
+                domain=source.manufacturer_domain,
+                reason="Deterministic test authority evidence.",
+            ),
+        )
+
+        self.assertEqual(result.state, "resolvable")
+        self.assertEqual([source.url for source in result.verified_sources], [good_url])
+        self.assertEqual(fetched, [good_url])
+
+    def test_equivalent_manufacturer_and_brand_queries_are_deduplicated(self) -> None:
+        catalogue = row("DUPLICATE-1")
+        catalogue.Part_Manuf = "Philips"
+        catalogue.DIB_Brand = " philips "
+        search = InMemorySourceSearchProvider({})
+
+        resolve_identity_and_source_policy(
+            catalogue,
+            search_provider=search,
+            enrichment_provider=self.provider([]),
+        )
+
+        self.assertEqual(
+            [query for query, _limit in search.queries],
+            ["DUPLICATE-1 Philips", "DUPLICATE-1"],
+        )
+
     def test_completed_search_without_trustworthy_source_is_not_retrieval_failure(self) -> None:
         result = resolve_identity_and_source_policy(
             row(),

@@ -22,6 +22,7 @@ from urllib.request import Request, urlopen
 from pydantic import BaseModel, Field, model_validator
 
 from .catalog_input import CatalogInputRow
+from .candidate_ranking import CandidateRanking, rank_candidate
 from .manufacturer_enrichment import ManufacturerEnrichmentProvider, ManufacturerSource
 from .reference_data import ReferenceResolutionResult, normalize_reference_value
 
@@ -397,6 +398,7 @@ class DiscoveredSourceCandidate(BaseModel):
     exact_mpn_in_result: bool | None = None
     discovery_reason: str
     status: CandidateStatus
+    ranking: CandidateRanking | None = None
 
 
 class SourceDiscoveryResult(BaseModel):
@@ -431,6 +433,7 @@ class DiscoveredSourceVerificationResult(BaseModel):
     verified_sources: list[ManufacturerSource] = Field(default_factory=list)
     diagnostics: list[SourceVerificationDiagnostic] = Field(default_factory=list)
     failure_code: DiscoveryFailureCode | None = None
+    selected_ranking: CandidateRanking | None = None
 
 
 class DiscoveryPilotRowResult(BaseModel):
@@ -569,6 +572,7 @@ def discover_manufacturer_sources(
                     catalogue_row.Mfg_Part_Num,
                     policy,
                     manufacturer_hint,
+                    catalogue_row.Part_Desc,
                 )
             )
 
@@ -589,6 +593,7 @@ def discover_manufacturer_sources(
                 catalogue_row.Mfg_Part_Num,
                 policy,
                 manufacturer_hint,
+                catalogue_row.Part_Desc,
             )
             candidates.append(candidate)
 
@@ -636,6 +641,7 @@ def discover_and_verify_sources(
     verified_sources: list[ManufacturerSource] = []
     diagnostics: list[SourceVerificationDiagnostic] = []
     retrieval_failure_seen = False
+    selected_ranking: CandidateRanking | None = None
     verification_provider = enrichment_provider.with_approved_domains(
         frozenset(policy.approved_domains)
     )
@@ -643,10 +649,27 @@ def discover_and_verify_sources(
         manufacturer_reference is not None
         and manufacturer_reference.status != "resolved"
     )
-    for candidate in discovery.candidates:
+    ranked_candidates = sorted(
+        discovery.candidates,
+        key=lambda candidate: (
+            -(candidate.ranking.score if candidate.ranking is not None else 0),
+            candidate.discovery_rank,
+        ),
+    )
+    for candidate in ranked_candidates:
         if candidate.status != "candidate":
             diagnostics.append(
                 _diagnostic(candidate, "rejected", "Candidate rejected by discovery policy.")
+            )
+            continue
+        if candidate.ranking is not None and candidate.ranking.decision == "bad":
+            diagnostics.append(
+                _diagnostic(
+                    candidate,
+                    "rejected",
+                    "; ".join(candidate.ranking.reasons),
+                    "CANDIDATE_RANKED_BAD",
+                )
             )
             continue
         if manufacturer_unresolved:
@@ -659,10 +682,14 @@ def discover_and_verify_sources(
             )
             continue
         retrieval = verification_provider.retrieve_source(
-            candidate.url, catalogue_row.Mfg_Part_Num
+            candidate.url,
+            catalogue_row.Mfg_Part_Num,
+            expected_identity=policy.manufacturer_name,
+            expected_description=catalogue_row.Part_Desc,
         )
         if retrieval.success and retrieval.source is not None:
             verified_sources.append(retrieval.source)
+            selected_ranking = candidate.ranking
             if verified_source_history is not None and policy.manufacturer_name:
                 verified_source_history.record_verified_source(
                     policy.manufacturer_name,
@@ -705,6 +732,7 @@ def discover_and_verify_sources(
         verified_sources=verified_sources,
         diagnostics=diagnostics,
         failure_code=failure_code,
+        selected_ranking=selected_ranking,
     )
 
 
@@ -715,6 +743,7 @@ def _candidate_from_result(
     part_number: str,
     policy: ManufacturerSourcePolicy,
     manufacturer_hint: str | None,
+    expected_description: str = "",
 ) -> DiscoveredSourceCandidate:
     parsed = urlparse(result.url)
     domain = (parsed.hostname or "").casefold().rstrip(".")
@@ -734,6 +763,18 @@ def _candidate_from_result(
     else:
         status = "candidate"
         reason = "Candidate matches the explicit discovery policy; retrieval verification is still required."
+    ranking = rank_candidate(
+        url=result.url,
+        title=result.title,
+        snippet=result.snippet,
+        expected_mpn=part_number,
+        expected_identities=(policy.manufacturer_name,) if policy.manufacturer_name else (),
+        expected_description=expected_description,
+        approved_domain=status == "candidate",
+        source_role=policy.source_role,
+        policy_status=status,
+        exact_mpn_in_result=exact,
+    )
     return DiscoveredSourceCandidate(
         url=result.url,
         domain=domain,
@@ -746,6 +787,7 @@ def _candidate_from_result(
         exact_mpn_in_result=exact,
         discovery_reason=reason,
         status=status,
+        ranking=ranking,
     )
 
 

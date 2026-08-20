@@ -202,7 +202,36 @@ def enrich_catalogue_row(
         )
 
     for url in source_urls:
-        retrieval = provider.retrieve_source(url, catalogue_row.Mfg_Part_Num)
+        if isinstance(provider, ManufacturerEnrichmentProvider):
+            # Catalogue identity is the expected product signal.  Do not use
+            # a runtime candidate identity as the sole expectation: that
+            # identity is independently verified only after retrieval and
+            # must not be allowed to validate the page that proposed it.
+            trusted_identity = next(
+                (
+                    candidate
+                    for field in ("E1_Brand", "Unilog_Brand", "DIB_Brand")
+                    if (candidate := brand_candidate(getattr(catalogue_row, field)))
+                ),
+                None,
+            )
+            if trusted_identity is None and runtime_identity is not None and runtime_identity.state == "resolvable":
+                trusted_identity = runtime_identity.resolved_identity
+            if trusted_identity is None and reference_resolution is not None:
+                if reference_resolution.manufacturer.status == "resolved":
+                    trusted_identity = reference_resolution.manufacturer.resolved_value
+                elif reference_resolution.brand.status == "resolved":
+                    trusted_identity = reference_resolution.brand.resolved_value
+            retrieval = provider.retrieve_source(
+                url,
+                catalogue_row.Mfg_Part_Num,
+                expected_identity=trusted_identity,
+                expected_description=catalogue_row.Part_Desc,
+            )
+        else:
+            # Preserve compatibility with deterministic test doubles and
+            # caller-provided providers using the original two-argument API.
+            retrieval = provider.retrieve_source(url, catalogue_row.Mfg_Part_Num)
         if not retrieval.success or retrieval.source is None:
             diagnostics.append(
                 EnrichmentSourceDiagnostic(

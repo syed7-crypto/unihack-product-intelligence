@@ -180,6 +180,95 @@ class ManufacturerEnrichmentTests(unittest.TestCase):
         self.assertTrue(result.success)
         client.assert_not_called()
 
+    def test_mpn_only_in_url_is_not_sufficient(self) -> None:
+        provider = ManufacturerEnrichmentProvider(
+            approved_domains={"example-manufacturer.com"},
+            fetcher=lambda url, timeout: payload(
+                b"<title>Ariat USA Flag Patch Navy Snapback Ball Cap</title>"
+            ),
+        )
+
+        result = provider.retrieve_source(
+            "https://example-manufacturer.com/products/unrelated-1517603",
+            "1517603",
+            expected_identity="United Window and Door Manufacturing",
+            expected_description="6068L Gliding Patio Door",
+        )
+
+        self.assertFalse(result.success)
+        self.assertEqual(result.code, "SOURCE_IDENTITY_MISMATCH")
+        self.assertIsNone(result.source)
+
+    def test_url_only_mpn_can_pass_with_matching_page_identity_context(self) -> None:
+        provider = ManufacturerEnrichmentProvider(
+            approved_domains={"example-manufacturer.com"},
+            fetcher=lambda url, timeout: payload(
+                b"<title>6068L Gliding Patio Door</title>"
+                b"<h1>United 6068L patio door</h1>"
+            ),
+        )
+
+        result = provider.retrieve_source(
+            "https://example-manufacturer.com/products/6068L-1517603",
+            "1517603",
+            expected_identity="United Window and Door Manufacturing",
+            expected_description="6068L Gliding Patio Door",
+        )
+
+        self.assertTrue(result.success)
+        assert result.source is not None
+        self.assertTrue(result.source.exact_mpn_verified)
+
+    def test_mpn_on_collection_page_without_product_identity_is_rejected(self) -> None:
+        provider = ManufacturerEnrichmentProvider(
+            approved_domains={"example-manufacturer.com"},
+            fetcher=lambda url, timeout: payload(
+                b"<title>Men's Accessories Collection</title><p>1517603</p>"
+            ),
+        )
+
+        result = provider.retrieve_source(
+            "https://example-manufacturer.com/collections/accessories?page=4&mpn=1517603",
+            "1517603",
+            expected_identity="United Window and Door Manufacturing",
+            expected_description="6068L Gliding Patio Door",
+        )
+
+        self.assertFalse(result.success)
+        self.assertEqual(result.code, "INSUFFICIENT_PRODUCT_IDENTITY")
+
+    def test_exact_mpn_in_body_with_conflicting_identity_is_rejected(self) -> None:
+        provider = ManufacturerEnrichmentProvider(
+            approved_domains={"example-manufacturer.com"},
+            fetcher=lambda url, timeout: payload(
+                b"<h1>1517603 Ariat USA Flag Patch Ball Cap</h1>"
+            ),
+        )
+
+        result = provider.retrieve_source(
+            "https://example-manufacturer.com/products/1517603",
+            "1517603",
+            expected_identity="United Window and Door Manufacturing",
+            expected_description="6068L Gliding Patio Door",
+        )
+
+        self.assertFalse(result.success)
+        self.assertEqual(result.code, "SOURCE_IDENTITY_MISMATCH")
+
+    def test_url_only_mpn_without_identity_context_is_rejected(self) -> None:
+        provider = ManufacturerEnrichmentProvider(
+            approved_domains={"example-manufacturer.com"},
+            fetcher=lambda url, timeout: payload(b"<h1>Product page</h1>"),
+        )
+
+        result = provider.retrieve_source(
+            "https://example-manufacturer.com/products/1517603",
+            "1517603",
+        )
+
+        self.assertFalse(result.success)
+        self.assertEqual(result.code, "EXACT_MPN_MISMATCH")
+
 
 if __name__ == "__main__":
     unittest.main()

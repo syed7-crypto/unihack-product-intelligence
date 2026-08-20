@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable, Sequence
 from typing import Literal, Protocol
 from urllib.parse import urlparse
 
 from pydantic import BaseModel, Field
 
-from .catalog_input import CatalogInputRow
+from .catalog_input import CatalogInputRow, brand_candidate
+from .candidate_ranking import CandidateRanking, rank_candidate
 from .manufacturer_enrichment import ManufacturerEnrichmentProvider, ManufacturerSource
 from .pilot_policies import ControlledSourcePolicy, resolve_source_policy_for_row
 from .reference_data import BrandReference, ManufacturerReference, normalize_reference_value
@@ -43,6 +45,7 @@ class RuntimeDomainCandidate(BaseModel):
     identity_hint: str | None = None
     discovery_url: str | None = None
     discovery_rank: int = Field(default=1, ge=1)
+    ranking: CandidateRanking | None = None
 
 
 class RuntimeDomainCandidateProvider(Protocol):
@@ -73,6 +76,7 @@ class IdentityResolutionResult(BaseModel):
     failure_code: IdentityFailureCode | None = None
     runtime_policy: ControlledSourcePolicy | None = None
     verified_sources: list[ManufacturerSource] = Field(default_factory=list)
+    selected_ranking: CandidateRanking | None = None
 
 
 def resolve_identity_and_source_policy(
@@ -141,8 +145,36 @@ def resolve_identity_and_source_policy(
         if candidate_domain_provider is not None:
             domain_candidates = list(candidate_domain_provider(row))[:max_candidate_domains]
         else:
-            search_results = search_provider.search(row.Mfg_Part_Num.strip(), max_results)
-            domain_candidates = _domain_candidates_from_search(search_results, max_candidate_domains)
+            search_results: list[SearchResult] = []
+            search_errors: list[str] = []
+            for query in _runtime_discovery_queries(row):
+                try:
+                    search_results.extend(search_provider.search(query, max_results))
+                except Exception as error:
+                    search_errors.append(f"Search failed for query '{query}': {error}")
+            diagnostics.extend(search_errors)
+            if not search_results and search_errors:
+                raise RuntimeError(search_errors[-1])
+            ranked_results = []
+            expected_identity = _catalogue_identity_hint(row)
+            for result in search_results:
+                ranking = rank_candidate(
+                    url=result.url,
+                    title=result.title,
+                    snippet=result.snippet,
+                    expected_mpn=row.Mfg_Part_Num,
+                    expected_identities=(expected_identity,) if expected_identity else (),
+                    expected_description=row.Part_Desc,
+                    approved_domain=False,
+                    exact_mpn_in_result=_contains_runtime_mpn(result, row.Mfg_Part_Num),
+                )
+                ranked_results.append((result, ranking))
+            ranked_results.sort(
+                key=lambda item: (-item[1].score, search_results.index(item[0]))
+            )
+            domain_candidates = _domain_candidates_from_search(
+                ranked_results, max_candidate_domains
+            )
     except Exception as error:
         return IdentityResolutionResult(
             state="unknown",
@@ -160,6 +192,12 @@ def resolve_identity_and_source_policy(
         if _is_retailer_domain(domain):
             diagnostics.append(f"Candidate retailer domain rejected: {domain}.")
             continue
+        if domain_candidate.ranking is not None and domain_candidate.ranking.decision == "bad":
+            diagnostics.append(
+                "Candidate skipped by deterministic ranking: "
+                + "; ".join(domain_candidate.ranking.reasons)
+            )
+            continue
         try:
             domain_results = search_provider.search(
                 f'site:{domain} "{row.Mfg_Part_Num.strip()}"', max_domain_searches
@@ -174,7 +212,12 @@ def resolve_identity_and_source_policy(
             candidate_urls.insert(0, domain_candidate.discovery_url)
         for url in dict.fromkeys(candidate_urls):
             scoped_provider = enrichment_provider.with_approved_domains({domain})
-            retrieval = scoped_provider.retrieve_source(url, row.Mfg_Part_Num)
+            retrieval = scoped_provider.retrieve_source(
+                url,
+                row.Mfg_Part_Num,
+                expected_identity=_catalogue_identity_hint(row),
+                expected_description=row.Part_Desc,
+            )
             if not retrieval.success or retrieval.source is None:
                 error_text = retrieval.error or "Exact-MPN source verification failed."
                 if _is_transport_retrieval_failure(error_text):
@@ -214,6 +257,7 @@ def resolve_identity_and_source_policy(
                 diagnostics=diagnostics,
                 runtime_policy=runtime_policy,
                 verified_sources=[source],
+                selected_ranking=domain_candidate.ranking,
             )
 
     return IdentityResolutionResult(
@@ -256,7 +300,12 @@ def _resolve_with_legacy_authority_verifier(
             diagnostics.append("Candidate had no matching independent authority evidence.")
             continue
         scoped_provider = enrichment_provider.with_approved_domains({domain})
-        retrieval = scoped_provider.retrieve_source(candidate.url, row.Mfg_Part_Num)
+        retrieval = scoped_provider.retrieve_source(
+            candidate.url,
+            row.Mfg_Part_Num,
+            expected_identity=_catalogue_identity_hint(row),
+            expected_description=row.Part_Desc,
+        )
         if not retrieval.success or retrieval.source is None:
             diagnostics.append(retrieval.error or "Exact-MPN source verification failed.")
             continue
@@ -318,11 +367,16 @@ def _is_transport_retrieval_failure(error: str) -> bool:
 
 
 def _domain_candidates_from_search(
-    results: Sequence[SearchResult], max_candidate_domains: int
+    results: Sequence[tuple[SearchResult, CandidateRanking]] | Sequence[SearchResult],
+    max_candidate_domains: int,
 ) -> list[RuntimeDomainCandidate]:
     candidates: list[RuntimeDomainCandidate] = []
     seen: set[str] = set()
-    for rank, result in enumerate(results, start=1):
+    for rank, item in enumerate(results, start=1):
+        if isinstance(item, tuple):
+            result, ranking = item
+        else:
+            result, ranking = item, None
         parsed = urlparse(result.url)
         domain = (parsed.hostname or "").casefold().rstrip(".")
         if parsed.scheme.casefold() != "https" or not domain or domain in seen:
@@ -330,11 +384,55 @@ def _domain_candidates_from_search(
         seen.add(domain)
         hint = domain.removeprefix("www.").split(".", 1)[0].replace("-", " ")
         candidates.append(RuntimeDomainCandidate(
-            domain=domain, identity_hint=hint, discovery_url=None, discovery_rank=rank
+            domain=domain,
+            identity_hint=hint,
+            discovery_url=None,
+            discovery_rank=rank,
+            ranking=ranking,
         ))
         if len(candidates) >= max_candidate_domains:
             break
     return candidates
+
+
+def _contains_runtime_mpn(result: SearchResult, expected_mpn: str) -> bool:
+    expected = normalize_reference_value(expected_mpn)
+    return expected in normalize_reference_value(
+        f"{result.title} {result.snippet} {result.url}"
+    )
+
+
+def _runtime_discovery_queries(row: CatalogInputRow) -> list[str]:
+    """Build identity-aware initial queries for rows without a policy.
+
+    The MPN remains the final fallback.  Manufacturer/brand values are query
+    hints only; they do not approve domains or sources.
+    """
+    part_number = row.Mfg_Part_Num.strip()
+    identities: list[str] = []
+
+    raw_manufacturer = row.Part_Manuf.strip()
+    if raw_manufacturer:
+        # Catalogue codes in parentheses are not manufacturer identity and
+        # only make search recall worse.
+        manufacturer = re.sub(r"\s*\([^)]*\)\s*$", "", raw_manufacturer).strip()
+        if manufacturer:
+            identities.append(manufacturer)
+
+    for field in ("E1_Brand", "Unilog_Brand", "DIB_Brand"):
+        brand = brand_candidate(getattr(row, field))
+        if brand:
+            identities.append(brand)
+
+    queries: list[str] = []
+    seen: set[str] = set()
+    for identity in (*identities, ""):
+        query = " ".join(part for part in (part_number, identity) if part).strip()
+        key = normalize_reference_value(query)
+        if query and key not in seen:
+            seen.add(key)
+            queries.append(query)
+    return queries
 
 
 def _normalize_candidate_domain(value: str) -> str | None:
@@ -358,6 +456,21 @@ def _candidate_urls_for_domain(results: Sequence[SearchResult], domain: str) -> 
         ):
             urls.append(result.url)
     return urls
+
+
+def _catalogue_identity_hint(row: CatalogInputRow) -> str | None:
+    """Return a non-placeholder catalogue brand for source verification.
+
+    This is deliberately derived from the input row, never from a search
+    result or candidate page.  ``Part_Manuf`` is excluded because it may be a
+    distributor or catalogue organization.  The product description remains
+    a separate signal at the retrieval boundary.
+    """
+    for field in ("E1_Brand", "Unilog_Brand", "DIB_Brand"):
+        candidate = brand_candidate(getattr(row, field))
+        if candidate:
+            return candidate
+    return None
 
 
 def _is_retailer_domain(domain: str) -> bool:

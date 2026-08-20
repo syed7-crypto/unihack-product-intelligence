@@ -122,7 +122,14 @@ class ManufacturerEnrichmentProvider:
             fetcher=self._fetcher,
         )
 
-    def retrieve_source(self, url: str, expected_mpn: str) -> RetrievalResult:
+    def retrieve_source(
+        self,
+        url: str,
+        expected_mpn: str,
+        *,
+        expected_identity: str | None = None,
+        expected_description: str | None = None,
+    ) -> RetrievalResult:
         """Fetch and verify one explicitly approved manufacturer URL."""
         try:
             try:
@@ -148,24 +155,97 @@ class ManufacturerEnrichmentProvider:
                 return _failure("Source content is not a supported HTML page or PDF.", "SOURCE_UNSUPPORTED_TYPE")
 
             if source_type == "pdf":
-                content_for_check = payload.body.decode("latin-1", errors="ignore")
-                if not _contains_exact_mpn(content_for_check, expected_mpn):
-                    # PDF text is not reliably represented in raw bytes. The
-                    # existing PDF extractor is the authoritative text check.
-                    source = _pdf_source_from_bytes(final_url, final_domain, payload.body)
-                    if not _contains_exact_mpn(source.extracted_text, expected_mpn):
-                        return _failure("Exact MPN was not found in the PDF.", "EXACT_MPN_MISMATCH")
-                else:
-                    source = _pdf_source_from_bytes(final_url, final_domain, payload.body)
-                    if not _contains_exact_mpn(source.extracted_text, expected_mpn):
-                        return _failure("Exact MPN was not found in the PDF text.", "EXACT_MPN_MISMATCH")
+                # PDF bytes are not a reliable text representation.  Extract
+                # once and use the extracted text as the authoritative check.
+                source = _pdf_source_from_bytes(final_url, final_domain, payload.body)
+                mpn_in_text = _contains_exact_mpn(source.extracted_text, expected_mpn)
+                if not mpn_in_text and not _contains_exact_mpn(final_url, expected_mpn):
+                    return _failure("Exact MPN was not found in the PDF.", "EXACT_MPN_MISMATCH")
+                if not mpn_in_text and not (expected_identity or expected_description):
+                    return _failure(
+                        "Exact MPN appears only in the URL; source identity context is required.",
+                        "EXACT_MPN_MISMATCH",
+                    )
+                if not mpn_in_text and _contains_conflicting_identifier(
+                    source.extracted_text, expected_mpn, expected_description
+                ):
+                    return _failure("A different product identifier was found in the PDF.", "EXACT_MPN_MISMATCH")
+                identity_matches = _matches_catalogue_identity(
+                    source.extracted_text, expected_identity, expected_description
+                )
+                if not mpn_in_text and not _has_catalogue_identity_signal(
+                    source.extracted_text, expected_identity, expected_description
+                ):
+                    return _failure(
+                        "The MPN was present only in the URL and the retrieved source did not provide matching product identity.",
+                        "SOURCE_IDENTITY_MISMATCH",
+                    )
+                if _has_conflicting_identity_signal(
+                    source.extracted_text, expected_identity, expected_description
+                ):
+                    return _failure(
+                        "Retrieved source identity does not match the catalogue product.",
+                        "SOURCE_IDENTITY_MISMATCH",
+                    )
+                if (expected_identity or expected_description) and not _has_product_level_identity_evidence(
+                    source.extracted_text,
+                    expected_mpn,
+                    expected_identity,
+                    expected_description,
+                ):
+                    return _failure(
+                        "Retrieved PDF did not provide sufficient product-level identity evidence.",
+                        "INSUFFICIENT_PRODUCT_IDENTITY",
+                    )
                 content: str | bytes = payload.body
             else:
                 text, title, headings = _extract_html_text(payload.body)
                 if not text:
                     return _failure("HTML source did not contain readable text.", "SOURCE_EMPTY")
-                if not _contains_exact_mpn(text, expected_mpn):
+                mpn_in_text = _contains_exact_mpn(text, expected_mpn)
+                if not mpn_in_text and not _contains_exact_mpn(final_url, expected_mpn):
                     return _failure("Exact MPN was not found in the HTML source.", "EXACT_MPN_MISMATCH")
+                if not mpn_in_text and not (expected_identity or expected_description):
+                    return _failure(
+                        "Exact MPN appears only in the URL; source identity context is required.",
+                        "EXACT_MPN_MISMATCH",
+                    )
+                if not mpn_in_text and _contains_conflicting_identifier(
+                    text, expected_mpn, expected_description
+                ):
+                    return _failure("A different product identifier was found in the HTML source.", "EXACT_MPN_MISMATCH")
+                identity_matches = _matches_catalogue_identity(
+                    text, expected_identity, expected_description
+                )
+                if not mpn_in_text and not _has_catalogue_identity_signal(
+                    text, expected_identity, expected_description
+                ):
+                    return _failure(
+                        (
+                            "The MPN was present only in the URL and the retrieved source did not "
+                            "provide matching product identity."
+                            if not mpn_in_text
+                            else "Retrieved source identity does not match the catalogue product."
+                        ),
+                        "SOURCE_IDENTITY_MISMATCH",
+                    )
+                if _has_conflicting_identity_signal(text, expected_identity, expected_description):
+                    return _failure(
+                        "Retrieved source identity does not match the catalogue product.",
+                        "SOURCE_IDENTITY_MISMATCH",
+                    )
+                if (expected_identity or expected_description) and not _has_product_level_identity_evidence(
+                    text,
+                    expected_mpn,
+                    expected_identity,
+                    expected_description,
+                    title=title,
+                    headings=headings,
+                ):
+                    return _failure(
+                        "Retrieved page did not provide sufficient product-level identity evidence.",
+                        "INSUFFICIENT_PRODUCT_IDENTITY",
+                    )
                 source_name = title or _url_source_name(final_url)
                 source = _web_source(final_url, source_name, text, headings)
                 # Retain the retrieved payload so a later conversion can
@@ -244,6 +324,166 @@ def _contains_exact_mpn(text: str, expected_mpn: str) -> bool:
     normalized_mpn = normalize_mpn(expected_mpn)
     pattern = rf"(?<![a-z0-9]){re.escape(normalized_mpn)}(?![a-z0-9])"
     return re.search(pattern, normalized_text) is not None
+
+
+def _matches_catalogue_identity(
+    text: str,
+    expected_identity: str | None,
+    expected_description: str | None,
+) -> bool:
+    """Require an independent page signal when catalogue identity is supplied.
+
+    The MPN check deliberately remains separate.  This helper never treats a
+    URL, search title, or search snippet as evidence: it only examines the
+    retrieved source text.  Existing callers that have no trusted identity
+    context retain the original exact-MPN behavior.
+    """
+    if not expected_identity and not expected_description:
+        return True
+
+    source_tokens = _identity_tokens(text)
+    identity_tokens = _identity_tokens(expected_identity or "")
+    description_tokens = _identity_tokens(expected_description or "")
+
+    if _compact_identity(expected_identity or "") and _compact_identity(expected_identity or "") in _compact_identity(text):
+        return True
+
+    identity_matches = len(source_tokens.intersection(identity_tokens))
+    description_matches = len(source_tokens.intersection(description_tokens))
+
+    # A short controlled identity such as "Hunter Fan" needs one distinctive
+    # overlap; longer manufacturer names need two.  Product descriptions use
+    # two overlaps so generic words alone cannot establish identity.
+    identity_threshold = 1 if len(identity_tokens) <= 3 else 2
+    identity_ok = bool(identity_tokens) and identity_matches >= identity_threshold
+    description_threshold = 1 if len(description_tokens) <= 2 else 2
+    description_ok = bool(description_tokens) and description_matches >= description_threshold
+    # A page that contains only the exact MPN is still valid when the MPN is
+    # present in the source body.  It provides no positive identity signal,
+    # but also provides no contradictory identity signal.
+    return identity_ok or description_ok or not source_tokens
+
+
+def _has_catalogue_identity_signal(
+    text: str,
+    expected_identity: str | None,
+    expected_description: str | None,
+) -> bool:
+    """Return whether page text positively supports the supplied identity."""
+    if not expected_identity and not expected_description:
+        return False
+    source_tokens = _identity_tokens(text)
+    identity_tokens = _identity_tokens(expected_identity or "")
+    description_tokens = _identity_tokens(expected_description or "")
+    compact_identity = _compact_identity(expected_identity or "")
+    if compact_identity and compact_identity in _compact_identity(text):
+        return True
+    if len(source_tokens.intersection(identity_tokens)) >= (1 if len(identity_tokens) <= 3 else 2):
+        return True
+    description_threshold = 1 if len(description_tokens) <= 2 else 2
+    return len(source_tokens.intersection(description_tokens)) >= description_threshold
+
+
+def _has_conflicting_identity_signal(
+    text: str,
+    expected_identity: str | None,
+    expected_description: str | None,
+) -> bool:
+    """Return whether non-generic page text contradicts supplied identity."""
+    if not expected_identity and not expected_description:
+        return False
+    return bool(_identity_tokens(text)) and not _has_catalogue_identity_signal(
+        text, expected_identity, expected_description
+    )
+
+
+def _has_product_level_identity_evidence(
+    text: str,
+    expected_mpn: str,
+    expected_identity: str | None,
+    expected_description: str | None,
+    *,
+    title: str = "",
+    headings: list[str] | None = None,
+) -> bool:
+    """Require evidence that the retrieved content is a product source.
+
+    This intentionally accepts several representations rather than requiring
+    one HTML selector.  URL text is never considered.  A page must expose the
+    exact MPN in a product-like title/heading or labeled model field, or
+    provide coherent catalogue-description evidence.
+    """
+    headings = headings or []
+    if any(
+        _contains_exact_mpn(value, expected_mpn)
+        for value in [title, *headings]
+    ):
+        return True
+
+    label_pattern = (
+        r"(?:model(?:\s+number)?|mpn|manufacturer\s+part\s+number|"
+        r"part\s+number|sku|product\s+code)\s*[:#-]?\s*"
+        + re.escape(normalize_mpn(expected_mpn))
+    )
+    if re.search(label_pattern, normalize_mpn(text), flags=re.IGNORECASE):
+        return True
+
+    source_tokens = _identity_tokens(text)
+    description_tokens = _identity_tokens(expected_description or "")
+    description_threshold = 1 if len(description_tokens) <= 2 else 2
+    description_matches = len(source_tokens.intersection(description_tokens))
+    if description_tokens and description_matches >= description_threshold:
+        return True
+
+    # A concise manufacturer/brand identity together with a visible exact
+    # MPN is also product-level evidence, even when the page uses an unusual
+    # non-heading layout.
+    return _contains_exact_mpn(text, expected_mpn) and _has_catalogue_identity_signal(
+        text, expected_identity, None
+    )
+
+
+def _contains_conflicting_identifier(
+    text: str,
+    expected_mpn: str,
+    expected_description: str | None,
+) -> bool:
+    """Reject a URL-only MPN when the page names another model/part number."""
+    expected = normalize_mpn(expected_mpn)
+    description_identifiers = {
+        normalize_mpn(token)
+        for token in re.findall(r"[A-Za-z0-9][A-Za-z0-9._/-]*\d[A-Za-z0-9._/-]*", expected_description or "")
+    }
+    for token in re.findall(r"(?<![A-Za-z0-9])[A-Za-z0-9][A-Za-z0-9._/-]*\d[A-Za-z0-9._/-]*(?![A-Za-z0-9])", text):
+        normalized = normalize_mpn(token)
+        if normalized != expected and normalized not in description_identifiers:
+            return True
+    return False
+
+
+_IDENTITY_STOP_WORDS = frozenset(
+    {
+        "and", "the", "with", "for", "from", "model", "product", "item",
+        "part", "number", "new", "blk", "ext", "int", "lowe", "arg",
+        "accessories", "collection", "category", "search", "results", "page",
+        "shop", "store", "products", "online", "buy", "home", "sale", "men",
+        "mens", "women", "womens",
+    }
+)
+
+
+def _identity_tokens(value: str) -> set[str]:
+    return {
+        token
+        for token in re.findall(r"[a-z0-9]+", value.casefold())
+        if len(token) >= 3
+        and any(character.isalpha() for character in token)
+        and token not in _IDENTITY_STOP_WORDS
+    }
+
+
+def _compact_identity(value: str) -> str:
+    return "".join(character for character in value.casefold() if character.isalnum())
 
 
 def _pdf_source_from_bytes(url: str, domain: str, content: bytes) -> NormalizedSource:
