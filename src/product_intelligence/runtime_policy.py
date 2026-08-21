@@ -143,6 +143,8 @@ def resolve_identity_and_source_policy(
             search_provider=search_provider,
             enrichment_provider=enrichment_provider,
             authority_verifier=authority_verifier,
+            manufacturer_reference=manufacturer_reference,
+            brand_reference=brand_reference,
             max_results=max_results,
             max_source_attempts=max_source_attempts,
         )
@@ -163,7 +165,11 @@ def resolve_identity_and_source_policy(
             if not search_results and search_errors:
                 raise RuntimeError(search_errors[-1])
             ranked_results = []
-            expected_identity = _catalogue_identity_hint(row)
+            expected_identity = _catalogue_identity_hint(
+                row,
+                manufacturer_reference=manufacturer_reference,
+                brand_reference=brand_reference,
+            )
             for result in search_results:
                 ranking = rank_candidate(
                     url=result.url,
@@ -230,7 +236,11 @@ def resolve_identity_and_source_policy(
             retrieval = scoped_provider.retrieve_source(
                 url,
                 row.Mfg_Part_Num,
-                expected_identity=_catalogue_identity_hint(row),
+                expected_identity=_catalogue_identity_hint(
+                    row,
+                    manufacturer_reference=manufacturer_reference,
+                    brand_reference=brand_reference,
+                ),
                 expected_description=row.Part_Desc,
             )
             if not retrieval.success or retrieval.source is None:
@@ -249,7 +259,11 @@ def resolve_identity_and_source_policy(
                         domain_candidate,
                         source,
                         normalized.extracted_text,
-                        expected_identity=_catalogue_identity_hint(row),
+                        expected_identity=_catalogue_identity_hint(
+                            row,
+                            manufacturer_reference=manufacturer_reference,
+                            brand_reference=brand_reference,
+                        ),
                     )
                 )
             except Exception as error:
@@ -262,7 +276,12 @@ def resolve_identity_and_source_policy(
             if evidence_domain != domain:
                 diagnostics.append("Site identity evidence domain did not match the candidate domain.")
                 continue
-            conflict = _catalogue_identity_conflict(row, evidence.controlled_identity)
+            conflict = _catalogue_identity_conflict(
+                row,
+                evidence.controlled_identity,
+                manufacturer_reference=manufacturer_reference,
+                brand_reference=brand_reference,
+            )
             if conflict is not None:
                 diagnostics.append(conflict)
                 continue
@@ -306,6 +325,8 @@ def _resolve_with_legacy_authority_verifier(
     search_provider: SourceSearchProvider,
     enrichment_provider: ManufacturerEnrichmentProvider,
     authority_verifier: RuntimeAuthorityVerifier,
+    manufacturer_reference: ManufacturerReference | None,
+    brand_reference: BrandReference | None,
     max_results: int,
     max_source_attempts: int,
 ) -> IdentityResolutionResult:
@@ -329,7 +350,12 @@ def _resolve_with_legacy_authority_verifier(
         if evidence is None or normalize_reference_value(evidence.domain).rstrip(".") != domain:
             diagnostics.append("Candidate had no matching independent authority evidence.")
             continue
-        conflict = _catalogue_identity_conflict(row, evidence.controlled_identity)
+        conflict = _catalogue_identity_conflict(
+            row,
+            evidence.controlled_identity,
+            manufacturer_reference=manufacturer_reference,
+            brand_reference=brand_reference,
+        )
         if conflict is not None:
             diagnostics.append(conflict)
             continue
@@ -344,7 +370,11 @@ def _resolve_with_legacy_authority_verifier(
         retrieval = scoped_provider.retrieve_source(
             candidate.url,
             row.Mfg_Part_Num,
-            expected_identity=_catalogue_identity_hint(row),
+            expected_identity=_catalogue_identity_hint(
+                row,
+                manufacturer_reference=manufacturer_reference,
+                brand_reference=brand_reference,
+            ),
             expected_description=row.Part_Desc,
         )
         if not retrieval.success or retrieval.source is None:
@@ -503,19 +533,63 @@ def _candidate_urls_for_domain(results: Sequence[SearchResult], domain: str) -> 
     return urls
 
 
-def _catalogue_identity_hint(row: CatalogInputRow) -> str | None:
-    """Return a non-placeholder catalogue brand for source verification.
+_PART_MANUF_QUALIFIERS = frozenset(
+    {
+        "accessory", "co", "company", "corp", "corporation", "inc",
+        "incorporated", "lighting", "manufacturing", "usa",
+    }
+)
 
-    This is deliberately derived from the input row, never from a search
-    result or candidate page.  ``Part_Manuf`` is excluded because it may be a
-    distributor or catalogue organization.  The product description remains
-    a separate signal at the retrieval boundary.
+
+def _part_manufacturer_identity_candidates(value: str) -> tuple[str, ...]:
+    """Return bounded, untrusted identity hints from a raw manufacturer field."""
+    base = re.sub(r"\s*\([^)]*\)\s*$", "", value.strip()).strip()
+    if not base:
+        return ()
+    candidates: list[str] = []
+    current = base.split()
+    while current:
+        candidate = " ".join(current).strip()
+        if candidate and candidate not in candidates:
+            candidates.append(candidate)
+        if len(current) <= 1 or current[-1].casefold().rstrip(".,") not in _PART_MANUF_QUALIFIERS:
+            break
+        current.pop()
+    return tuple(reversed(candidates))
+
+
+def _catalogue_identity_hint(
+    row: CatalogInputRow,
+    *,
+    manufacturer_reference: ManufacturerReference | None = None,
+    brand_reference: BrandReference | None = None,
+) -> str | None:
+    """Return the highest-priority catalogue identity hint.
+
+    Hints never approve a source; existing page-local identity, exact-MPN,
+    product-level, HTTPS, and governance gates remain mandatory.
     """
+    if manufacturer_reference is not None:
+        result = manufacturer_reference.resolve(row.Part_Manuf)
+        if result.status == "resolved" and isinstance(result.resolved_value, str):
+            return result.resolved_value
+    if brand_reference is not None:
+        for field in ("E1_Brand", "Unilog_Brand", "DIB_Brand"):
+            candidate = brand_candidate(getattr(row, field))
+            if candidate:
+                result = brand_reference.resolve(candidate)
+                if result.status == "resolved" and isinstance(result.resolved_value, str):
+                    return result.resolved_value
     for field in ("E1_Brand", "Unilog_Brand", "DIB_Brand"):
         candidate = brand_candidate(getattr(row, field))
         if candidate:
             return candidate
-    return None
+    parsed = tuple(
+        candidate
+        for candidate in _part_manufacturer_identity_candidates(row.Part_Manuf)
+        if not _is_non_identity_manufacturer_hint(candidate)
+    )
+    return parsed[0] if parsed else None
 
 
 def _catalogue_identity_candidates(row: CatalogInputRow) -> tuple[str, ...]:
@@ -525,13 +599,13 @@ def _catalogue_identity_candidates(row: CatalogInputRow) -> tuple[str, ...]:
         candidate = brand_candidate(getattr(row, field))
         if candidate and candidate not in candidates:
             candidates.append(candidate)
-    manufacturer = re.sub(r"\s*\([^)]*\)\s*$", "", row.Part_Manuf.strip()).strip()
-    if (
-        manufacturer
-        and not _is_non_identity_manufacturer_hint(manufacturer)
-        and manufacturer not in candidates
-    ):
-        candidates.append(manufacturer)
+    for manufacturer in _part_manufacturer_identity_candidates(row.Part_Manuf):
+        if (
+            manufacturer
+            and not _is_non_identity_manufacturer_hint(manufacturer)
+            and manufacturer not in candidates
+        ):
+            candidates.append(manufacturer)
     return tuple(candidates)
 
 
@@ -541,7 +615,13 @@ def _is_non_identity_manufacturer_hint(value: str) -> bool:
     return normalized in {"unknown", "unknown distributor", "n a", "na"} or "distributor" in normalized
 
 
-def _catalogue_identity_conflict(row: CatalogInputRow, discovered_identity: str) -> str | None:
+def _catalogue_identity_conflict(
+    row: CatalogInputRow,
+    discovered_identity: str,
+    *,
+    manufacturer_reference: ManufacturerReference | None = None,
+    brand_reference: BrandReference | None = None,
+) -> str | None:
     """Return a review diagnostic for a clearly different discovered identity.
 
     Catalogue identity is never overwritten.  Matching is deterministic and
@@ -550,7 +630,14 @@ def _catalogue_identity_conflict(row: CatalogInputRow, discovered_identity: str)
     verified-source path and surfaced for manufacturer review.
     """
     discovered = discovered_identity.strip()
-    expected = _catalogue_identity_candidates(row)
+    expected = list(_catalogue_identity_candidates(row))
+    resolved_hint = _catalogue_identity_hint(
+        row,
+        manufacturer_reference=manufacturer_reference,
+        brand_reference=brand_reference,
+    )
+    if resolved_hint and resolved_hint not in expected:
+        expected.insert(0, resolved_hint)
     if not discovered or not expected:
         return None
     discovered_normalized = normalize_reference_value(discovered)
@@ -747,7 +834,10 @@ def _identity_matches(expected: str, observed: str) -> bool:
     observed_compact = _compact_identity(observed)
     if not expected_compact or not observed_compact:
         return False
-    if expected_compact in observed_compact or observed_compact in expected_compact:
+    # Compact equality handles punctuation/whitespace variants such as
+    # ``ACME Tools`` and ``ACME-Tools``.  Do not accept substring matches:
+    # ``Festo`` and ``Festool`` are distinct identities.
+    if expected_compact == observed_compact:
         return True
     expected_tokens = set(_identity_tokens(expected))
     observed_tokens = set(_identity_tokens(observed))
@@ -798,6 +888,7 @@ def _catalogue_identity_hint_from_text(extracted_text: str) -> str | None:
 
 def _identity_tokens(value: str) -> set[str]:
     """Return conservative word tokens for identity comparison."""
+    value = value.casefold()
     return {
         token.casefold()
         for token in re.findall(r"[a-z0-9]+", value)
@@ -807,4 +898,4 @@ def _identity_tokens(value: str) -> set[str]:
 
 def _compact_identity(value: str) -> str:
     """Remove presentation separators for deterministic identity comparison."""
-    return "".join(character for character in value if character.isalnum())
+    return "".join(character for character in value.casefold() if character.isalnum())

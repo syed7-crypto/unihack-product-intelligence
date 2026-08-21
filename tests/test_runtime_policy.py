@@ -14,6 +14,9 @@ from src.product_intelligence.runtime_policy import (
     IdentityResolutionResult,
     RuntimeDomainCandidate,
     RuntimeAuthorityEvidence,
+    _catalogue_identity_candidates,
+    _catalogue_identity_hint,
+    _identity_matches,
     resolve_identity_and_source_policy,
 )
 from src.product_intelligence.source_discovery import InMemorySourceSearchProvider, SearchResult
@@ -35,6 +38,118 @@ def schema() -> DeliverySchema:
 
 
 class RuntimePolicyTests(unittest.TestCase):
+    def test_catalogue_identity_hint_precedence_and_raw_manufacturer_preservation(self) -> None:
+        milwaukee = row("49-94-0013", manufacturer="Milwaukee Accessory (4031)")
+        self.assertEqual(_catalogue_identity_hint(milwaukee), "Milwaukee")
+        self.assertEqual(milwaukee.Part_Manuf, "Milwaukee Accessory (4031)")
+        self.assertEqual(
+            _catalogue_identity_candidates(milwaukee),
+            ("Milwaukee", "Milwaukee Accessory"),
+        )
+
+        timbertech = row("ADCB15516BS", manufacturer="Parksite (6151)")
+        timbertech.DIB_Brand = "TIMBERTECH"
+        self.assertEqual(_catalogue_identity_hint(timbertech), "TIMBERTECH")
+        self.assertEqual(timbertech.Part_Manuf, "Parksite (6151)")
+
+        philips = row("576512", manufacturer="Phillips Lighting (5831)")
+        philips.DIB_Brand = "Philips"
+        self.assertEqual(_catalogue_identity_hint(philips), "Philips")
+
+        festool = row("578808", manufacturer="Festool USA (FESTO)")
+        self.assertEqual(_catalogue_identity_hint(festool), "Festool")
+        self.assertNotIn("FESTO", _catalogue_identity_candidates(festool))
+
+    def test_parsed_milwaukee_hint_supports_page_identity_verification(self) -> None:
+        catalogue = row(
+            "49-94-0013",
+            manufacturer="Milwaukee Accessory (4031)",
+        )
+        url = "https://milwaukee.example/product/49-94-0013"
+        body = (
+            b"<title>5 inch Metal Cut Off Wheel | Milwaukee Tool</title>"
+            b'<meta property="og:title" content="Metal Cut Off Wheel | Milwaukee Tool">'
+            b"<h1>5 inch Metal Cut Off Wheel</h1>"
+            b"<p>Milwaukee Tool 49-94-0013</p>"
+        )
+        result = resolve_identity_and_source_policy(
+            catalogue,
+            search_provider=InMemorySourceSearchProvider({
+                'site:milwaukee.example "49-94-0013"': [SearchResult(url=url)]
+            }),
+            enrichment_provider=self.provider([], body),
+            candidate_domain_provider=lambda _row: [RuntimeDomainCandidate(
+                domain="milwaukee.example"
+            )],
+        )
+
+        self.assertEqual(result.state, "resolvable")
+        self.assertEqual(result.resolved_identity, "Milwaukee")
+        self.assertEqual(catalogue.Part_Manuf, "Milwaukee Accessory (4031)")
+
+    def test_explicit_resolved_references_take_precedence_over_raw_hints(self) -> None:
+        catalogue = row("REFERENCE-1", manufacturer="Approved Manufacturer")
+        catalogue.DIB_Brand = "Approved Brand"
+        self.assertEqual(
+            _catalogue_identity_hint(
+                catalogue,
+                manufacturer_reference=ManufacturerReference(["Approved Manufacturer"]),
+                brand_reference=BrandReference(["Approved Brand"]),
+            ),
+            "Approved Manufacturer",
+        )
+
+        catalogue.Part_Manuf = "Raw Distributor (123)"
+        self.assertEqual(
+            _catalogue_identity_hint(
+                catalogue,
+                manufacturer_reference=ManufacturerReference(["Approved Manufacturer"]),
+                brand_reference=BrandReference(["Approved Brand"]),
+            ),
+            "Approved Brand",
+        )
+
+    def test_identity_matching_is_case_insensitive(self) -> None:
+        self.assertTrue(_identity_matches("TIMBERTECH", "TimberTech"))
+        self.assertTrue(_identity_matches("MILWAUKEE TOOL", "Milwaukee Tool"))
+
+    def test_identity_matching_preserves_compact_punctuation_normalization(self) -> None:
+        self.assertTrue(_identity_matches("A.C.M.E. Tools", "ACME-Tools"))
+        self.assertTrue(_identity_matches("  Acme   Tools ", "ACME Tools"))
+        self.assertFalse(_identity_matches("Festool", "Festo"))
+
+    def test_chinook_style_page_resolves_uppercase_catalogue_brand(self) -> None:
+        url = "https://chinook.example/product/ADCB15516BS"
+        body = (
+            b'<title>TimberTech Advanced - Harvest - Brownstone</title>'
+            b'<meta property="og:title" content="TimberTech Advanced - Harvest">'
+            b'<meta property="og:description" content="Azek Building Products">'
+            b'<h1>TimberTech Advanced - Harvest</h1>'
+            b'<div class="product-brandname">TimberTech</div>'
+            b'<span>Product Code: ADCB15516BS</span>'
+        )
+        catalogue = CatalogInputRow(
+            Mfg_Part_Num="ADCB15516BS",
+            Part_Desc="1x6 Brownstone Harvest Azek PVC Decking",
+            E1_Brand="TIMBERTECH",
+            Unilog_Brand="-- No Unilog Brand --",
+            DIB_Brand="-- No DIB Brand --",
+            Part_Manuf="Parksite (6151)",
+        )
+        result = resolve_identity_and_source_policy(
+            catalogue,
+            search_provider=InMemorySourceSearchProvider({
+                'site:chinook.example "ADCB15516BS"': [SearchResult(url=url)]
+            }),
+            enrichment_provider=self.provider([], body),
+            candidate_domain_provider=lambda _row: [RuntimeDomainCandidate(
+                domain="chinook.example"
+            )],
+        )
+
+        self.assertEqual(result.state, "resolvable")
+        self.assertEqual(result.resolved_identity, "TIMBERTECH")
+
     def provider(self, fetched: list[str], body: bytes = b"<h1>Model RUNTIME-1</h1>"):
         def fetcher(url: str, timeout: float) -> RetrievedPayload:
             fetched.append(url)
