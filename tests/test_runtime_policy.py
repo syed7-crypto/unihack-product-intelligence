@@ -803,7 +803,7 @@ class RuntimePolicyTests(unittest.TestCase):
         self.assertEqual(result.ready_rows, 1)
         self.assertEqual([source.url for source in captured], [url])
         self.assertEqual(captured_identity[0].resolved_identity, "Hunter")
-        self.assertEqual(captured_identity[0].identity_kind, "manufacturer")
+        self.assertEqual(captured_identity[0].identity_kind, "brand")
 
     def test_product_first_accepts_compact_brand_format_from_page_text(self) -> None:
         url = "https://milwaukeetool.example/product/RUNTIME-1"

@@ -392,6 +392,7 @@ def resolve_identity_and_source_policy(
             conflict = _catalogue_identity_conflict(
                 row,
                 evidence.controlled_identity,
+                discovered_kind=evidence.identity_kind,
                 manufacturer_reference=manufacturer_reference,
                 brand_reference=brand_reference,
             )
@@ -490,6 +491,7 @@ def _resolve_with_legacy_authority_verifier(
         conflict = _catalogue_identity_conflict(
             row,
             evidence.controlled_identity,
+            discovered_kind=evidence.identity_kind,
             manufacturer_reference=manufacturer_reference,
             brand_reference=brand_reference,
         )
@@ -795,6 +797,7 @@ def _catalogue_identity_conflict(
     row: CatalogInputRow,
     discovered_identity: str,
     *,
+    discovered_kind: RuntimeIdentityKind = "manufacturer",
     manufacturer_reference: ManufacturerReference | None = None,
     brand_reference: BrandReference | None = None,
 ) -> str | None:
@@ -807,11 +810,29 @@ def _catalogue_identity_conflict(
     """
     discovered = discovered_identity.strip()
     expected = list(_catalogue_identity_candidates(row))
-    resolved_hint = _catalogue_identity_hint(
-        row,
-        manufacturer_reference=manufacturer_reference,
-        brand_reference=brand_reference,
-    )
+    if discovered_kind == "brand":
+        expected = [
+            candidate
+            for field in ("E1_Brand", "Unilog_Brand", "DIB_Brand")
+            for candidate in [brand_candidate(getattr(row, field))]
+            if candidate
+        ]
+    if discovered_kind == "brand":
+        resolved_hint = None
+        if brand_reference is not None:
+            for field in ("E1_Brand", "Unilog_Brand", "DIB_Brand"):
+                candidate = brand_candidate(getattr(row, field))
+                if candidate:
+                    resolved = brand_reference.resolve(candidate)
+                    if resolved.status == "resolved" and isinstance(resolved.resolved_value, str):
+                        resolved_hint = resolved.resolved_value
+                        break
+    else:
+        resolved_hint = _catalogue_identity_hint(
+            row,
+            manufacturer_reference=manufacturer_reference,
+            brand_reference=brand_reference,
+        )
     if resolved_hint and resolved_hint not in expected:
         expected.insert(0, resolved_hint)
     if not discovered or not expected:
@@ -858,11 +879,17 @@ def _deterministic_site_identity(
     text. Explicit conflicting labels take precedence over signal counts.
     """
     page_identities = _extract_labeled_page_identities(extracted_text)
-    if len({_compact_identity(value) for value in page_identities}) > 1:
+    page_identities.extend(_extract_structured_page_identities(source))
+    if len({(_compact_identity(value), kind) for value, kind in page_identities}) > 1:
         return None
     if page_identities:
-        discovered_identity = page_identities[0]
-        return _runtime_identity_evidence(source, discovered_identity, "explicit page identity label")
+        discovered_identity, identity_kind = page_identities[0]
+        return _runtime_identity_evidence(
+            source,
+            discovered_identity,
+            "explicit page identity label" if identity_kind in {"manufacturer", "brand"} else "page metadata",
+            identity_kind=identity_kind,
+        )
 
     if not expected_identity:
         return None
@@ -896,10 +923,12 @@ def _runtime_identity_evidence(
     source: ManufacturerSource,
     identity: str,
     signal: str,
+    *,
+    identity_kind: RuntimeIdentityKind = "manufacturer",
 ) -> RuntimeAuthorityEvidence:
     return RuntimeAuthorityEvidence(
         controlled_identity=identity,
-        identity_kind="manufacturer",
+        identity_kind=identity_kind,
         domain=source.manufacturer_domain,
         reason=f"The retrieved exact-MPN page contains an {signal}.",
         evidence_reference=source.url,
@@ -916,15 +945,23 @@ class _PageIdentityParser(HTMLParser):
         self.site_name: list[str] = []
         self.description: list[str] = []
         self.structured: list[str] = []
+        self.structured_identities: list[tuple[str, RuntimeIdentityKind]] = []
         self.visible: list[str] = []
         self._hidden_depth = 0
         self._title_depth = 0
+        self._script_depth = 0
+        self._script_buffer: list[str] = []
+        self._script_chars = 0
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         tag = tag.casefold()
         attributes = {key.casefold(): value or "" for key, value in attrs}
         if tag in {"script", "style", "noscript", "template"}:
             self._hidden_depth += 1
+        if tag == "script":
+            self._script_depth += 1
+            self._script_buffer = []
+            self._script_chars = 0
         if tag == "title":
             self._title_depth += 1
         if tag != "meta":
@@ -947,12 +984,22 @@ class _PageIdentityParser(HTMLParser):
 
     def handle_endtag(self, tag: str) -> None:
         tag = tag.casefold()
+        if tag == "script" and self._script_depth:
+            self._extract_script_identities("".join(self._script_buffer))
+            self._script_depth -= 1
         if tag in {"script", "style", "noscript", "template"} and self._hidden_depth:
             self._hidden_depth -= 1
         if tag == "title" and self._title_depth:
             self._title_depth -= 1
 
     def handle_data(self, data: str) -> None:
+        if self._script_depth:
+            remaining = 50_000 - self._script_chars
+            if remaining > 0:
+                fragment = data[:remaining]
+                self._script_buffer.append(fragment)
+                self._script_chars += len(fragment)
+            return
         value = " ".join(data.split())
         if not value or self._hidden_depth:
             return
@@ -960,6 +1007,18 @@ class _PageIdentityParser(HTMLParser):
             self.title.append(value)
         else:
             self.visible.append(value)
+
+    def _extract_script_identities(self, script: str) -> None:
+        """Read only explicitly keyed identity fields from page-local state."""
+        patterns = (
+            ("brand", r"[\"']?brand(?:_name)?[\"']?\s*:\s*[\"']([^\"']{2,80})[\"']"),
+            ("manufacturer", r"[\"']?manufacturer(?:_name)?[\"']?\s*:\s*[\"']([^\"']{2,80})[\"']"),
+        )
+        for kind, pattern in patterns:
+            for match in re.finditer(pattern, script, flags=re.IGNORECASE):
+                value = " ".join(match.group(1).split()).strip()
+                if value and (value, kind) not in self.structured_identities:
+                    self.structured_identities.append((value, kind))
 
 
 def _page_identity_signals(
@@ -986,7 +1045,27 @@ def _page_identity_signals(
         "visible_text": parser.visible,
         "description": parser.description,
         "structured_metadata": parser.structured,
+        "structured_brand": [value for value, kind in parser.structured_identities if kind == "brand"],
+        "structured_manufacturer": [
+            value for value, kind in parser.structured_identities if kind == "manufacturer"
+        ],
     }
+
+
+def _extract_structured_page_identities(
+    source: ManufacturerSource,
+) -> list[tuple[str, RuntimeIdentityKind]]:
+    """Extract typed identities from bounded page-local application state."""
+    if source.source_type != "web":
+        return []
+    parser = _PageIdentityParser()
+    payload = source.content if isinstance(source.content, bytes) else source.content.encode("utf-8")
+    try:
+        parser.feed(payload.decode("utf-8", errors="replace"))
+        parser.close()
+    except Exception:
+        return []
+    return list(parser.structured_identities)
 
 
 def _conflicting_unlabeled_identity(
@@ -1021,18 +1100,21 @@ def _identity_matches(expected: str, observed: str) -> bool:
     return bool(expected_tokens.intersection(observed_tokens))
 
 
-def _extract_labeled_page_identities(extracted_text: str) -> list[str]:
-    values: list[str] = []
+def _extract_labeled_page_identities(
+    extracted_text: str,
+) -> list[tuple[str, RuntimeIdentityKind]]:
+    values: list[tuple[str, RuntimeIdentityKind]] = []
     patterns = (
-        r"\bmanufacturer(?:\s+name)?\s*[:\-]\s*([^\n|;]{2,80})",
-        r"\bbrand(?:\s+name)?\s*[:\-]\s*([^\n|;]{2,80})",
-        r"\bmade\s+by\s*[:\-]\s*([^\n|;]{2,80})",
+        ("manufacturer", r"\bmanufacturer(?:\s+name)?\s*[:\-]\s*([^\n|;]{2,80})"),
+        ("brand", r"\bbrand(?:\s+name)?\s*[:\-]\s*([^\n|;]{2,80})"),
+        ("manufacturer", r"\bmade\s+by\s*[:\-]\s*([^\n|;]{2,80})"),
     )
-    for pattern in patterns:
+    for kind, pattern in patterns:
         for match in re.finditer(pattern, extracted_text, flags=re.IGNORECASE):
             value = re.sub(r"\s+", " ", match.group(1)).strip(" .,-")
-            if value and value not in values:
-                values.append(value)
+            item = (value, kind)
+            if value and item not in values:
+                values.append(item)
     return values
 
 
