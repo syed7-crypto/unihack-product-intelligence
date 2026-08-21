@@ -14,7 +14,12 @@ from .catalog_input import CatalogInputRow, brand_candidate
 from .candidate_ranking import CandidateRanking, rank_candidate
 from .manufacturer_enrichment import ManufacturerEnrichmentProvider, ManufacturerSource
 from .pilot_policies import ControlledSourcePolicy, resolve_source_policy_for_row
-from .reference_data import BrandReference, ManufacturerReference, normalize_reference_value
+from .reference_data import (
+    BrandReference,
+    IdentityAssertion,
+    ManufacturerReference,
+    normalize_reference_value,
+)
 from .source_discovery import SearchResult, SourceSearchProvider
 
 
@@ -34,6 +39,7 @@ class RuntimeAuthorityEvidence(BaseModel):
     identity_kind: RuntimeIdentityKind
     domain: str = Field(min_length=1)
     reason: str = Field(min_length=1)
+    evidence_reference: str | None = None
 
 
 class RuntimeAuthorityVerifier(Protocol):
@@ -69,6 +75,22 @@ class RuntimeSiteIdentityVerifier(Protocol):
         """Verify identity from the retrieved manufacturer-site content."""
 
 
+class CandidateTelemetry(BaseModel):
+    """Bounded diagnostic record for one considered source candidate."""
+
+    url: str = ""
+    domain: str = ""
+    ranking: CandidateRanking | None = None
+    fetched: bool = False
+    http_status: int | None = None
+    content_type: str | None = None
+    exact_mpn_verified: bool | None = None
+    identity_value: str | None = None
+    identity_kind: RuntimeIdentityKind | None = None
+    identity_result: str | None = None
+    rejection_code: str | None = None
+
+
 class IdentityResolutionResult(BaseModel):
     """Outcome of controlled identity/source resolution for one row."""
 
@@ -82,6 +104,23 @@ class IdentityResolutionResult(BaseModel):
     runtime_policy: ControlledSourcePolicy | None = None
     verified_sources: list[ManufacturerSource] = Field(default_factory=list)
     selected_ranking: CandidateRanking | None = None
+    identity_assertion: IdentityAssertion | None = None
+    candidate_telemetry: list[CandidateTelemetry] = Field(default_factory=list)
+
+
+def _identity_assertion(
+    value: str,
+    kind: RuntimeIdentityKind,
+    source: str,
+    evidence_reference: str | None = None,
+) -> IdentityAssertion:
+    return IdentityAssertion(
+        value=value,
+        kind=kind,
+        source=source,
+        trust_level="high" if source != "catalogue" else "low",
+        evidence_reference=evidence_reference,
+    )
 
 
 def resolve_identity_and_source_policy(
@@ -120,6 +159,11 @@ def resolve_identity_and_source_policy(
             identity_kind=known.identity_kind,
             approved_domains=known.approved_domains,
             reason="A controlled manufacturer/brand policy was resolved.",
+            identity_assertion=_identity_assertion(
+                known.manufacturer_name,
+                known.identity_kind,
+                "controlled_reference",
+            ),
         )
 
     if search_provider is None or enrichment_provider is None:
@@ -198,15 +242,43 @@ def resolve_identity_and_source_policy(
 
     retrieval_failure_seen = False
     attempted_sources = 0
+    candidate_telemetry: list[CandidateTelemetry] = []
     for domain_candidate in domain_candidates:
         domain = _normalize_candidate_domain(domain_candidate.domain)
         if domain is None:
+            candidate_telemetry.append(
+                CandidateTelemetry(
+                    url=domain_candidate.discovery_url or "",
+                    domain=domain_candidate.domain,
+                    ranking=domain_candidate.ranking,
+                    rejection_code="INVALID_HTTPS_CANDIDATE",
+                    identity_result="not_considered",
+                )
+            )
             diagnostics.append("Candidate rejected because it is not an HTTPS URL.")
             continue
         if _is_retailer_domain(domain):
+            candidate_telemetry.append(
+                CandidateTelemetry(
+                    url=domain_candidate.discovery_url or "",
+                    domain=domain,
+                    ranking=domain_candidate.ranking,
+                    rejection_code="RETAILER_DOMAIN_REJECTED",
+                    identity_result="not_considered",
+                )
+            )
             diagnostics.append(f"Candidate retailer domain rejected: {domain}.")
             continue
         if domain_candidate.ranking is not None and domain_candidate.ranking.decision == "bad":
+            candidate_telemetry.append(
+                CandidateTelemetry(
+                    url=domain_candidate.discovery_url or "",
+                    domain=domain,
+                    ranking=domain_candidate.ranking,
+                    rejection_code="CANDIDATE_RANKING_BAD",
+                    identity_result="not_considered",
+                )
+            )
             diagnostics.append(
                 "Candidate skipped by deterministic ranking: "
                 + "; ".join(domain_candidate.ranking.reasons)
@@ -218,6 +290,15 @@ def resolve_identity_and_source_policy(
             )
         except Exception as error:
             retrieval_failure_seen = True
+            candidate_telemetry.append(
+                CandidateTelemetry(
+                    url=domain_candidate.discovery_url or "",
+                    domain=domain,
+                    ranking=domain_candidate.ranking,
+                    rejection_code="DOMAIN_SEARCH_FAILED",
+                    identity_result="not_considered",
+                )
+            )
             diagnostics.append(f"Domain-constrained search failed for {domain}: {error}")
             continue
 
@@ -226,12 +307,28 @@ def resolve_identity_and_source_policy(
             candidate_urls.insert(0, domain_candidate.discovery_url)
         for url in dict.fromkeys(candidate_urls):
             if attempted_sources >= max_source_attempts:
+                candidate_telemetry.append(
+                    CandidateTelemetry(
+                        url=url,
+                        domain=domain,
+                        ranking=domain_candidate.ranking,
+                        rejection_code="ATTEMPT_LIMIT_REACHED",
+                        identity_result="not_fetched",
+                    )
+                )
                 diagnostics.append(
                     f"Candidate retrieval attempt limit ({max_source_attempts}) reached; "
                     "remaining URLs were not fetched."
                 )
                 break
             attempted_sources += 1
+            telemetry = CandidateTelemetry(
+                url=url,
+                domain=domain,
+                ranking=domain_candidate.ranking,
+                fetched=True,
+            )
+            candidate_telemetry.append(telemetry)
             scoped_provider = enrichment_provider.with_approved_domains({domain})
             retrieval = scoped_provider.retrieve_source(
                 url,
@@ -244,12 +341,20 @@ def resolve_identity_and_source_policy(
                 expected_description=row.Part_Desc,
             )
             if not retrieval.success or retrieval.source is None:
+                telemetry.http_status = retrieval.http_status
+                telemetry.content_type = retrieval.content_type
+                telemetry.exact_mpn_verified = False
+                telemetry.identity_result = "not_evaluated"
+                telemetry.rejection_code = retrieval.code or "SOURCE_RETRIEVAL_FAILED"
                 error_text = retrieval.error or "Exact-MPN source verification failed."
                 if _is_transport_retrieval_failure(error_text):
                     retrieval_failure_seen = True
                 diagnostics.append(error_text)
                 continue
             source = retrieval.source
+            telemetry.http_status = retrieval.http_status
+            telemetry.content_type = retrieval.content_type
+            telemetry.exact_mpn_verified = source.exact_mpn_verified
             try:
                 normalized = scoped_provider.to_normalized_source(source)
                 evidence = (
@@ -267,13 +372,21 @@ def resolve_identity_and_source_policy(
                     )
                 )
             except Exception as error:
+                telemetry.identity_result = "error"
+                telemetry.rejection_code = "IDENTITY_VERIFICATION_FAILED"
                 diagnostics.append(f"Site identity verification failed: {error}")
                 continue
             if evidence is None:
+                telemetry.identity_result = "not_verified"
+                telemetry.rejection_code = "IDENTITY_NOT_VERIFIED"
                 diagnostics.append("Candidate site did not provide matching manufacturer identity evidence.")
                 continue
+            telemetry.identity_value = evidence.controlled_identity
+            telemetry.identity_kind = evidence.identity_kind
             evidence_domain = normalize_reference_value(evidence.domain).rstrip(".")
             if evidence_domain != domain:
+                telemetry.identity_result = "domain_mismatch"
+                telemetry.rejection_code = "IDENTITY_DOMAIN_MISMATCH"
                 diagnostics.append("Site identity evidence domain did not match the candidate domain.")
                 continue
             conflict = _catalogue_identity_conflict(
@@ -283,8 +396,11 @@ def resolve_identity_and_source_policy(
                 brand_reference=brand_reference,
             )
             if conflict is not None:
+                telemetry.identity_result = "conflict"
+                telemetry.rejection_code = "MANUFACTURER_IDENTITY_CONFLICT"
                 diagnostics.append(conflict)
                 continue
+            telemetry.identity_result = "verified"
             runtime_policy = ControlledSourcePolicy(
                 controlled_identity=evidence.controlled_identity,
                 identity_kind=evidence.identity_kind,
@@ -301,6 +417,13 @@ def resolve_identity_and_source_policy(
                 runtime_policy=runtime_policy,
                 verified_sources=[source],
                 selected_ranking=domain_candidate.ranking,
+                identity_assertion=_identity_assertion(
+                    evidence.controlled_identity,
+                    evidence.identity_kind,
+                    "page_evidence",
+                    evidence.evidence_reference or source.url,
+                ),
+                candidate_telemetry=candidate_telemetry,
             )
 
     return IdentityResolutionResult(
@@ -316,6 +439,7 @@ def resolve_identity_and_source_policy(
             else "NO_TRUSTWORTHY_SOURCE"
             )
         ),
+        candidate_telemetry=candidate_telemetry,
     )
 
 
@@ -331,6 +455,7 @@ def _resolve_with_legacy_authority_verifier(
     max_source_attempts: int,
 ) -> IdentityResolutionResult:
     diagnostics: list[str] = []
+    candidate_telemetry: list[CandidateTelemetry] = []
     try:
         search_results = search_provider.search(row.Mfg_Part_Num.strip(), max_results)
     except Exception as error:
@@ -344,10 +469,22 @@ def _resolve_with_legacy_authority_verifier(
         parsed = urlparse(candidate.url)
         domain = (parsed.hostname or "").casefold().rstrip(".")
         if parsed.scheme.casefold() != "https" or not domain or _is_retailer_domain(domain):
+            candidate_telemetry.append(CandidateTelemetry(
+                url=candidate.url,
+                domain=domain,
+                rejection_code="CANDIDATE_GOVERNANCE_REJECTED",
+                identity_result="not_considered",
+            ))
             diagnostics.append("Candidate rejected by HTTPS/retailer safety checks.")
             continue
         evidence = authority_verifier(row, candidate)
         if evidence is None or normalize_reference_value(evidence.domain).rstrip(".") != domain:
+            candidate_telemetry.append(CandidateTelemetry(
+                url=candidate.url,
+                domain=domain,
+                identity_result="not_verified",
+                rejection_code="IDENTITY_AUTHORITY_NOT_VERIFIED",
+            ))
             diagnostics.append("Candidate had no matching independent authority evidence.")
             continue
         conflict = _catalogue_identity_conflict(
@@ -357,15 +494,37 @@ def _resolve_with_legacy_authority_verifier(
             brand_reference=brand_reference,
         )
         if conflict is not None:
+            candidate_telemetry.append(CandidateTelemetry(
+                url=candidate.url,
+                domain=domain,
+                identity_value=evidence.controlled_identity,
+                identity_kind=evidence.identity_kind,
+                identity_result="conflict",
+                rejection_code="MANUFACTURER_IDENTITY_CONFLICT",
+            ))
             diagnostics.append(conflict)
             continue
         if attempted_sources >= max_source_attempts:
+            candidate_telemetry.append(CandidateTelemetry(
+                url=candidate.url,
+                domain=domain,
+                rejection_code="ATTEMPT_LIMIT_REACHED",
+                identity_result="not_fetched",
+            ))
             diagnostics.append(
                 f"Candidate retrieval attempt limit ({max_source_attempts}) reached; "
                 "remaining candidates were not fetched."
             )
             break
         attempted_sources += 1
+        telemetry = CandidateTelemetry(
+            url=candidate.url,
+            domain=domain,
+            fetched=True,
+            identity_value=evidence.controlled_identity,
+            identity_kind=evidence.identity_kind,
+        )
+        candidate_telemetry.append(telemetry)
         scoped_provider = enrichment_provider.with_approved_domains({domain})
         retrieval = scoped_provider.retrieve_source(
             candidate.url,
@@ -378,8 +537,17 @@ def _resolve_with_legacy_authority_verifier(
             expected_description=row.Part_Desc,
         )
         if not retrieval.success or retrieval.source is None:
+            telemetry.http_status = retrieval.http_status
+            telemetry.content_type = retrieval.content_type
+            telemetry.exact_mpn_verified = False
+            telemetry.identity_result = "not_evaluated"
+            telemetry.rejection_code = retrieval.code or "SOURCE_RETRIEVAL_FAILED"
             diagnostics.append(retrieval.error or "Exact-MPN source verification failed.")
             continue
+        telemetry.http_status = retrieval.http_status
+        telemetry.content_type = retrieval.content_type
+        telemetry.exact_mpn_verified = retrieval.source.exact_mpn_verified
+        telemetry.identity_result = "verified"
         runtime_policy = ControlledSourcePolicy(
             controlled_identity=evidence.controlled_identity,
             identity_kind=evidence.identity_kind,
@@ -392,6 +560,13 @@ def _resolve_with_legacy_authority_verifier(
             reason="Authority evidence and exact-MPN source verification succeeded.",
             diagnostics=diagnostics, runtime_policy=runtime_policy,
             verified_sources=[retrieval.source],
+            identity_assertion=_identity_assertion(
+                evidence.controlled_identity,
+                evidence.identity_kind,
+                "page_evidence",
+                evidence.evidence_reference or retrieval.source.url,
+            ),
+            candidate_telemetry=candidate_telemetry,
         )
     return IdentityResolutionResult(
         state="unknown", reason="No candidate satisfied authority and exact-MPN verification.",
@@ -401,6 +576,7 @@ def _resolve_with_legacy_authority_verifier(
             if any("Catalogue identity conflicts" in item for item in diagnostics)
             else "NO_TRUSTWORTHY_SOURCE"
         ),
+        candidate_telemetry=candidate_telemetry,
     )
 
 
@@ -726,6 +902,7 @@ def _runtime_identity_evidence(
         identity_kind="manufacturer",
         domain=source.manufacturer_domain,
         reason=f"The retrieved exact-MPN page contains an {signal}.",
+        evidence_reference=source.url,
     )
 
 

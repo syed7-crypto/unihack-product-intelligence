@@ -11,6 +11,19 @@ from .catalog_input import CatalogInputRow, brand_candidate, is_placeholder_bran
 
 
 ResolutionStatus = Literal["resolved", "unresolved", "invalid"]
+IdentityKind = Literal["manufacturer", "brand"]
+IdentitySource = Literal["catalogue", "controlled_reference", "page_evidence"]
+IdentityTrustLevel = Literal["low", "medium", "high"]
+
+
+class IdentityAssertion(BaseModel):
+    """One typed identity fact, kept separate from other identity roles."""
+
+    value: str = Field(min_length=1)
+    kind: IdentityKind
+    source: IdentitySource
+    trust_level: IdentityTrustLevel
+    evidence_reference: str | None = None
 
 
 class ReferenceResolutionResult(BaseModel):
@@ -91,6 +104,57 @@ class BrandReference(_ExactReference):
                 reason="The input is an explicit brand placeholder.",
             )
         return super().resolve(raw_value)
+
+
+class BrandManufacturerRelationship(BaseModel):
+    """An explicitly governed brand-to-manufacturer relationship."""
+
+    brand: str = Field(min_length=1)
+    manufacturer: str = Field(min_length=1)
+    reason: str = Field(min_length=1)
+
+
+class BrandManufacturerReference:
+    """Resolve only relationships supplied by controlled reference data.
+
+    This class never creates a relationship from page evidence or catalogue
+    text.  An empty registry is valid and simply leaves relationships
+    unresolved.
+    """
+
+    def __init__(self, relationships: Iterable[BrandManufacturerRelationship]) -> None:
+        self._lookup: dict[str, BrandManufacturerRelationship] = {}
+        for relationship in relationships:
+            key = normalize_reference_value(relationship.brand)
+            if key in self._lookup and self._lookup[key] != relationship:
+                raise ValueError(f"Ambiguous brand relationship: '{relationship.brand}'.")
+            self._lookup[key] = relationship
+
+    def resolve(self, brand: str | None) -> ReferenceResolutionResult:
+        if brand is None or not brand.strip():
+            return ReferenceResolutionResult(
+                input_value=brand,
+                resolved_value=None,
+                status="unresolved",
+                reference_type="manufacturer_relationship",
+                reason="No brand was supplied for relationship resolution.",
+            )
+        relationship = self._lookup.get(normalize_reference_value(brand))
+        if relationship is None:
+            return ReferenceResolutionResult(
+                input_value=brand,
+                resolved_value=None,
+                status="unresolved",
+                reference_type="manufacturer_relationship",
+                reason="No controlled brand-to-manufacturer relationship exists.",
+            )
+        return ReferenceResolutionResult(
+            input_value=brand,
+            resolved_value=relationship.manufacturer,
+            status="resolved",
+            reference_type="manufacturer_relationship",
+            reason=relationship.reason,
+        )
 
 
 class TaxonomyPath(BaseModel):
@@ -294,6 +358,9 @@ class CatalogReferenceResolution(BaseModel):
 
     manufacturer: ReferenceResolutionResult
     brands: dict[str, ReferenceResolutionResult]
+    identity_assertions: list[IdentityAssertion] = Field(default_factory=list)
+    manufacturer_assertion: IdentityAssertion | None = None
+    brand_assertions: dict[str, IdentityAssertion] = Field(default_factory=dict)
 
 
 def resolve_catalog_row_references(

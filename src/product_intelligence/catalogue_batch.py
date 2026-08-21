@@ -19,7 +19,13 @@ from .catalogue_enrichment import (
 from .delivery_output import map_raw_fields_to_delivery
 from .delivery_schema import DeliverySchema
 from .manufacturer_enrichment import ManufacturerEnrichmentProvider
-from .reference_data import AttributeReference, BrandReference, ManufacturerReference, UOMReference
+from .reference_data import (
+    AttributeReference,
+    BrandManufacturerReference,
+    BrandReference,
+    ManufacturerReference,
+    UOMReference,
+)
 from .review import ReviewIssue, ReviewReport
 from .source_discovery import (
     ManufacturerSourcePolicy,
@@ -84,6 +90,7 @@ def run_catalogue_batch(
     provider: ManufacturerEnrichmentProvider | None = None,
     manufacturer_reference: ManufacturerReference | None = None,
     brand_reference: BrandReference | None = None,
+    brand_manufacturer_reference: BrandManufacturerReference | None = None,
     attribute_reference: AttributeReference | None = None,
     uom_reference: UOMReference | None = None,
     attribute_mappings: AttributeDeliveryMappings | None = None,
@@ -142,6 +149,7 @@ def run_catalogue_batch(
                     provider=provider,
                     manufacturer_reference=manufacturer_reference,
                     brand_reference=brand_reference,
+                    brand_manufacturer_reference=brand_manufacturer_reference,
                     attribute_reference=attribute_reference,
                     uom_reference=uom_reference,
                     attribute_mappings=attribute_mappings,
@@ -159,6 +167,7 @@ def run_catalogue_batch(
                     provider=provider,
                     manufacturer_reference=manufacturer_reference,
                     brand_reference=brand_reference,
+                    brand_manufacturer_reference=brand_manufacturer_reference,
                     attribute_reference=attribute_reference,
                     uom_reference=uom_reference,
                     attribute_mappings=attribute_mappings,

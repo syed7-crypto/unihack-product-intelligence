@@ -59,6 +59,8 @@ class RetrievalResult(BaseModel):
     source: ManufacturerSource | None = None
     error: str | None = None
     code: str | None = None
+    http_status: int | None = None
+    content_type: str | None = None
 
     @model_validator(mode="after")
     def validate_result(self) -> "RetrievalResult":
@@ -133,28 +135,38 @@ class ManufacturerEnrichmentProvider:
         expected_description: str | None = None,
     ) -> RetrievalResult:
         """Fetch and verify one explicitly approved manufacturer URL."""
+        payload: RetrievedPayload | None = None
+
+        def fail(message: str, code: str = "SOURCE_RETRIEVAL_FAILED") -> RetrievalResult:
+            return _failure(
+                message,
+                code,
+                http_status=payload.status_code if payload is not None else None,
+                content_type=(payload.headers.get("content-type") if payload is not None else None),
+            )
+
         try:
             try:
                 domain = _approved_domain(url, self.approved_domains)
             except ValueError as error:
-                return _failure(str(error), "SOURCE_DOMAIN_NOT_APPROVED")
+                return fail(str(error), "SOURCE_DOMAIN_NOT_APPROVED")
             if not expected_mpn.strip():
-                return _failure("An expected MPN is required.", "MPN_MISSING")
+                return fail("An expected MPN is required.", "MPN_MISSING")
 
             payload = self._fetcher(url, self.timeout)
             final_url = payload.final_url or url
             try:
                 final_domain = _approved_domain(final_url, self.approved_domains)
             except ValueError as error:
-                return _failure(str(error), "SOURCE_REDIRECT_NOT_APPROVED")
+                return fail(str(error), "SOURCE_REDIRECT_NOT_APPROVED")
             if payload.status_code < 200 or payload.status_code >= 300:
-                return _failure(f"Source returned HTTP status {payload.status_code}.", "SOURCE_HTTP_ERROR")
+                return fail(f"Source returned HTTP status {payload.status_code}.", "SOURCE_HTTP_ERROR")
             if not payload.body:
-                return _failure("Source returned an empty response.", "SOURCE_EMPTY")
+                return fail("Source returned an empty response.", "SOURCE_EMPTY")
 
             source_type = _source_type(final_url, payload.headers, payload.body)
             if source_type is None:
-                return _failure("Source content is not a supported HTML page or PDF.", "SOURCE_UNSUPPORTED_TYPE")
+                return fail("Source content is not a supported HTML page or PDF.", "SOURCE_UNSUPPORTED_TYPE")
 
             if source_type == "pdf":
                 # PDF bytes are not a reliable text representation.  Extract
@@ -162,30 +174,30 @@ class ManufacturerEnrichmentProvider:
                 source = _pdf_source_from_bytes(final_url, final_domain, payload.body)
                 mpn_in_text = _contains_exact_mpn(source.extracted_text, expected_mpn)
                 if not mpn_in_text and not _contains_exact_mpn(final_url, expected_mpn):
-                    return _failure("Exact MPN was not found in the PDF.", "EXACT_MPN_MISMATCH")
+                    return fail("Exact MPN was not found in the PDF.", "EXACT_MPN_MISMATCH")
                 if not mpn_in_text and not (expected_identity or expected_description):
-                    return _failure(
+                    return fail(
                         "Exact MPN appears only in the URL; source identity context is required.",
                         "EXACT_MPN_MISMATCH",
                     )
                 if not mpn_in_text and _contains_conflicting_identifier(
                     source.extracted_text, expected_mpn, expected_description
                 ):
-                    return _failure("A different product identifier was found in the PDF.", "EXACT_MPN_MISMATCH")
+                    return fail("A different product identifier was found in the PDF.", "EXACT_MPN_MISMATCH")
                 identity_matches = _matches_catalogue_identity(
                     source.extracted_text, expected_identity, expected_description
                 )
                 if not mpn_in_text and not _has_catalogue_identity_signal(
                     source.extracted_text, expected_identity, expected_description
                 ):
-                    return _failure(
+                    return fail(
                         "The MPN was present only in the URL and the retrieved source did not provide matching product identity.",
                         "SOURCE_IDENTITY_MISMATCH",
                     )
                 if _has_conflicting_identity_signal(
                     source.extracted_text, expected_identity, expected_description
                 ):
-                    return _failure(
+                    return fail(
                         "Retrieved source identity does not match the catalogue product.",
                         "SOURCE_IDENTITY_MISMATCH",
                     )
@@ -195,7 +207,7 @@ class ManufacturerEnrichmentProvider:
                     expected_identity,
                     expected_description,
                 ):
-                    return _failure(
+                    return fail(
                         "Retrieved PDF did not provide sufficient product-level identity evidence.",
                         "INSUFFICIENT_PRODUCT_IDENTITY",
                     )
@@ -203,26 +215,26 @@ class ManufacturerEnrichmentProvider:
             else:
                 text, title, headings = _extract_html_text(payload.body)
                 if not text:
-                    return _failure("HTML source did not contain readable text.", "SOURCE_EMPTY")
+                    return fail("HTML source did not contain readable text.", "SOURCE_EMPTY")
                 mpn_in_text = _contains_exact_mpn(text, expected_mpn)
                 if not mpn_in_text and not _contains_exact_mpn(final_url, expected_mpn):
-                    return _failure("Exact MPN was not found in the HTML source.", "EXACT_MPN_MISMATCH")
+                    return fail("Exact MPN was not found in the HTML source.", "EXACT_MPN_MISMATCH")
                 if not mpn_in_text and not (expected_identity or expected_description):
-                    return _failure(
+                    return fail(
                         "Exact MPN appears only in the URL; source identity context is required.",
                         "EXACT_MPN_MISMATCH",
                     )
                 if not mpn_in_text and _contains_conflicting_identifier(
                     text, expected_mpn, expected_description
                 ):
-                    return _failure("A different product identifier was found in the HTML source.", "EXACT_MPN_MISMATCH")
+                    return fail("A different product identifier was found in the HTML source.", "EXACT_MPN_MISMATCH")
                 identity_matches = _matches_catalogue_identity(
                     text, expected_identity, expected_description
                 )
                 if not mpn_in_text and not _has_catalogue_identity_signal(
                     text, expected_identity, expected_description
                 ):
-                    return _failure(
+                    return fail(
                         (
                             "The MPN was present only in the URL and the retrieved source did not "
                             "provide matching product identity."
@@ -232,7 +244,7 @@ class ManufacturerEnrichmentProvider:
                         "SOURCE_IDENTITY_MISMATCH",
                     )
                 if _has_conflicting_identity_signal(text, expected_identity, expected_description):
-                    return _failure(
+                    return fail(
                         "Retrieved source identity does not match the catalogue product.",
                         "SOURCE_IDENTITY_MISMATCH",
                     )
@@ -262,11 +274,16 @@ class ManufacturerEnrichmentProvider:
                 content=content,
                 exact_mpn_verified=True,
             )
-            return RetrievalResult(success=True, source=manufacturer_source)
+            return RetrievalResult(
+                success=True,
+                source=manufacturer_source,
+                http_status=payload.status_code,
+                content_type=payload.headers.get("content-type"),
+            )
         except (ValueError, ExtractionError, OSError, HTTPError, URLError, TimeoutError) as error:
-            return _failure(str(error) or "Source retrieval failed.")
+            return fail(str(error) or "Source retrieval failed.")
         except Exception:
-            return _failure("Source retrieval failed.")
+            return fail("Source retrieval failed.")
 
     def retrieve_sources(self, urls: list[str], expected_mpn: str) -> list[RetrievalResult]:
         """Retrieve an explicit list without performing discovery."""
@@ -666,5 +683,17 @@ def _is_identifier_label(value: str) -> bool:
     return compact in _IDENTIFIER_KEYS
 
 
-def _failure(message: str, code: str = "SOURCE_RETRIEVAL_FAILED") -> RetrievalResult:
-    return RetrievalResult(success=False, error=message, code=code)
+def _failure(
+    message: str,
+    code: str = "SOURCE_RETRIEVAL_FAILED",
+    *,
+    http_status: int | None = None,
+    content_type: str | None = None,
+) -> RetrievalResult:
+    return RetrievalResult(
+        success=False,
+        error=message,
+        code=code,
+        http_status=http_status,
+        content_type=content_type,
+    )

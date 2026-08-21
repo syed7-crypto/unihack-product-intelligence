@@ -35,7 +35,9 @@ from .pipeline import ProductIntelligencePipelineError, ProductIntelligenceResul
 from .reference_data import (
     AttributeReference,
     BrandReference,
+    BrandManufacturerReference,
     CatalogReferenceResolution,
+    IdentityAssertion,
     ManufacturerReference,
     ReferenceResolutionResult,
     UOMReference,
@@ -117,6 +119,7 @@ def enrich_catalogue_row(
     provider: ManufacturerEnrichmentProvider | None = None,
     manufacturer_reference: ManufacturerReference | None = None,
     brand_reference: BrandReference | None = None,
+    brand_manufacturer_reference: BrandManufacturerReference | None = None,
     attribute_reference: AttributeReference | None = None,
     uom_reference: UOMReference | None = None,
     attribute_mappings: AttributeDeliveryMappings | None = None,
@@ -138,7 +141,11 @@ def enrich_catalogue_row(
     mappings = attribute_mappings or AttributeDeliveryMappings()
     delivery_row = map_raw_fields_to_delivery(catalogue_row, delivery_schema)
     reference_resolution = _resolve_references(
-        catalogue_row, manufacturer_reference, brand_reference, runtime_identity
+        catalogue_row,
+        manufacturer_reference,
+        brand_reference,
+        runtime_identity,
+        brand_manufacturer_reference,
     )
     _map_resolved_identity(delivery_row, reference_resolution)
 
@@ -443,6 +450,7 @@ def _resolve_references(
     manufacturer_reference: ManufacturerReference | None,
     brand_reference: BrandReference | None,
     runtime_identity: IdentityResolutionResult | None = None,
+    brand_manufacturer_reference: BrandManufacturerReference | None = None,
 ) -> CatalogReferenceResolution:
     if manufacturer_reference is None:
         manufacturer = _unresolved("manufacturer", "No manufacturer reference was configured.")
@@ -450,6 +458,18 @@ def _resolve_references(
         manufacturer = manufacturer_reference.resolve(row.Part_Manuf)
 
     brands: dict[str, ReferenceResolutionResult] = {}
+    identity_assertions: list[IdentityAssertion] = []
+    manufacturer_assertion: IdentityAssertion | None = None
+    brand_assertions: dict[str, IdentityAssertion] = {}
+
+    if manufacturer.status == "resolved" and isinstance(manufacturer.resolved_value, str):
+        manufacturer_assertion = IdentityAssertion(
+            value=manufacturer.resolved_value,
+            kind="manufacturer",
+            source="controlled_reference",
+            trust_level="high",
+        )
+        identity_assertions.append(manufacturer_assertion)
     for field in ("E1_Brand", "Unilog_Brand", "DIB_Brand"):
         candidate = brand_candidate(getattr(row, field))
         if brand_reference is None:
@@ -459,6 +479,27 @@ def _resolve_references(
         if candidate is None:
             result = result.model_copy(update={"input_value": getattr(row, field)})
         brands[field] = result
+
+        if result.status == "resolved" and isinstance(result.resolved_value, str):
+            assertion = IdentityAssertion(
+                value=result.resolved_value,
+                kind="brand",
+                source="controlled_reference",
+                trust_level="high",
+            )
+            brand_assertions[field] = assertion
+            identity_assertions.append(assertion)
+        elif candidate:
+            # Raw catalogue brands remain low-trust hints and are never used
+            # as approved manufacturer identity.
+            assertion = IdentityAssertion(
+                value=candidate,
+                kind="brand",
+                source="catalogue",
+                trust_level="low",
+            )
+            brand_assertions[field] = assertion
+            identity_assertions.append(assertion)
 
     trusted_runtime = None
     if (
@@ -477,13 +518,46 @@ def _resolve_references(
                 "resolution; not persisted to the reference registry."
             ),
         )
+        runtime_assertion = runtime_identity.identity_assertion or IdentityAssertion(
+            value=runtime_identity.resolved_identity,
+            kind=runtime_identity.identity_kind,
+            source=("controlled_reference" if runtime_identity.state == "known" else "page_evidence"),
+            trust_level="high",
+        )
+        identity_assertions.append(runtime_assertion)
         if runtime_identity.identity_kind == "manufacturer":
             manufacturer = trusted_runtime
+            manufacturer_assertion = runtime_assertion
+        else:
+            brand_assertions["runtime_identity"] = runtime_assertion
+
+    if manufacturer.status != "resolved" and brand_manufacturer_reference is not None:
+        relationship_brand = next(
+            (
+                assertion.value
+                for assertion in brand_assertions.values()
+                if assertion.kind == "brand"
+            ),
+            None,
+        )
+        relationship = brand_manufacturer_reference.resolve(relationship_brand)
+        if relationship.status == "resolved" and isinstance(relationship.resolved_value, str):
+            manufacturer = relationship.model_copy(update={"reference_type": "manufacturer"})
+            manufacturer_assertion = IdentityAssertion(
+                value=relationship.resolved_value,
+                kind="manufacturer",
+                source="controlled_reference",
+                trust_level="high",
+            )
+            identity_assertions.append(manufacturer_assertion)
 
     return CatalogReferenceResolution(
         manufacturer=manufacturer,
         brands=brands,
         runtime_identity=trusted_runtime,
+        identity_assertions=identity_assertions,
+        manufacturer_assertion=manufacturer_assertion,
+        brand_assertions=brand_assertions,
     )
 
 
