@@ -89,6 +89,7 @@ def build_review_report(
                 if explicit_code in {
                     "NO_TRUSTWORTHY_SOURCE",
                     "IDENTITY_UNRESOLVED",
+                    "MANUFACTURER_IDENTITY_CONFLICT",
                     "CANDIDATE_PLAUSIBLE",
                 }
                 or successful_sources
@@ -108,7 +109,10 @@ def build_review_report(
                 current_value=error,
                 affects_delivery=(
                     True
-                    if explicit_code == "CANDIDATE_PLAUSIBLE"
+                    if explicit_code in {
+                        "CANDIDATE_PLAUSIBLE",
+                        "MANUFACTURER_IDENTITY_CONFLICT",
+                    }
                     else not bool(successful_sources)
                 ),
             )
@@ -168,6 +172,22 @@ def build_review_report(
                     source_id=diagnostic.source_id,
                     source_name=diagnostic.source_name,
                     affects_delivery=not bool(pipeline_result.extracted_attributes),
+                )
+            )
+
+        if successful_sources and not _has_usable_enrichment_value(
+            pipeline_result, mapping_diagnostics
+        ):
+            add(
+                ReviewIssue(
+                    code="NO_ACCEPTED_ATTRIBUTES",
+                    severity="warning",
+                    scope="row",
+                    message=(
+                        "The authoritative source was verified, but no usable "
+                        "enrichment or delivery value was accepted."
+                    ),
+                    affects_delivery=True,
                 )
             )
         for extraction in pipeline_result.extracted_attributes:
@@ -258,6 +278,13 @@ def build_review_report(
         and not successful_sources
         and not all(
             "identity/source policy resolution unknown" in str(getattr(item, "error", "")).casefold()
+            for item in source_diagnostics
+        )
+        and not any(
+            getattr(item, "code", None) in {
+                "CANDIDATE_PLAUSIBLE",
+                "MANUFACTURER_IDENTITY_CONFLICT",
+            }
             for item in source_diagnostics
         )
     ):
@@ -359,6 +386,25 @@ def _validated_value(pipeline_result: ProductIntelligenceResult, name: str | Non
         if attribute.name == name and attribute.values:
             return attribute.values[0].value
     return None
+
+
+def _has_usable_enrichment_value(
+    pipeline_result: ProductIntelligenceResult,
+    mapping_diagnostics: Sequence[object],
+) -> bool:
+    """Return whether at least one validated value can reach delivery.
+
+    Catalogue enrichment provides mapping diagnostics for every attempted
+    attribute.  A mapped diagnostic is therefore the strongest signal.  The
+    validated-value fallback keeps this review helper useful for callers that
+    inspect a pipeline result before delivery mapping has been performed.
+    """
+    if mapping_diagnostics:
+        return any(getattr(item, "status", None) == "mapped" for item in mapping_diagnostics)
+    return any(
+        attribute.status in {"consistent", "single_source"} and bool(attribute.values)
+        for attribute in pipeline_result.validation.attributes
+    )
 
 
 def _report_status(issues: list[ReviewIssue]) -> ReviewStatusValue:

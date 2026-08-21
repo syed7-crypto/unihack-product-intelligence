@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import hashlib
 import html
+import ast
+import json
 import re
 import tempfile
 from collections.abc import Callable, Mapping
@@ -422,7 +424,7 @@ def _has_product_level_identity_evidence(
 
     label_pattern = (
         r"(?:model(?:\s+number)?|mpn|manufacturer\s+part\s+number|"
-        r"part\s+number|sku|product\s+code)\s*[:#-]?\s*"
+        r"part\s+number|sku|product\s+code|eoc)\s*[:#-]?\s*"
         + re.escape(normalize_mpn(expected_mpn))
     )
     if re.search(label_pattern, normalize_mpn(text), flags=re.IGNORECASE):
@@ -528,11 +530,23 @@ class _VisibleTextParser(HTMLParser):
         self.parts: list[str] = []
         self.headings: list[str] = []
         self.title_parts: list[str] = []
+        self.structured_parts: list[str] = []
+        self._structured_chars = 0
         self._hidden_depth = 0
         self._heading_depth = 0
         self._title_depth = 0
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        for name, value in attrs:
+            if value:
+                for fragment in _extract_structured_identifier_fragments(value):
+                    if self._structured_chars >= _MAX_STRUCTURED_TEXT_CHARS:
+                        break
+                    remaining = _MAX_STRUCTURED_TEXT_CHARS - self._structured_chars
+                    fragment = fragment[:remaining]
+                    if fragment and fragment not in self.structured_parts:
+                        self.structured_parts.append(fragment)
+                        self._structured_chars += len(fragment)
         if tag in {"script", "style", "noscript", "template"}:
             self._hidden_depth += 1
         if tag in {"h1", "h2", "h3", "h4", "h5", "h6"}:
@@ -565,7 +579,91 @@ def _extract_html_text(payload: bytes) -> tuple[str, str, list[str]]:
     parser = _VisibleTextParser()
     parser.feed(payload.decode("utf-8", errors="replace"))
     parser.close()
-    return "\n".join(parser.parts), " ".join(parser.title_parts), parser.headings
+    parts = [*parser.parts, *parser.structured_parts]
+    return "\n".join(parts), " ".join(parser.title_parts), parser.headings
+
+
+_MAX_STRUCTURED_ATTRIBUTE_CHARS = 100_000
+_MAX_STRUCTURED_TEXT_CHARS = 50_000
+_IDENTIFIER_KEYS = frozenset(
+    {
+        "eoc",
+        "mpn",
+        "model",
+        "modelnumber",
+        "modelno",
+        "partnumber",
+        "partno",
+        "manufacturermodel",
+        "manufacturerpartnumber",
+        "productcode",
+        "productid",
+        "itemnumber",
+        "itemno",
+        "sku",
+    }
+)
+
+
+def _extract_structured_identifier_fragments(raw_value: str) -> list[str]:
+    """Extract only explicitly labelled product identifiers from an attribute.
+
+    HTML attributes can contain large JSON blobs or malformed JavaScript.  The
+    parser is deliberately bounded and only emits values whose key/label is a
+    recognized identifier field.  Arbitrary tracking IDs and unrelated scalar
+    attributes therefore cannot become MPN evidence.
+    """
+    decoded = html.unescape(raw_value).strip()
+    if not decoded or len(decoded) > _MAX_STRUCTURED_ATTRIBUTE_CHARS:
+        return []
+    parsed: object | None = None
+    for loader in (json.loads, ast.literal_eval):
+        try:
+            parsed = loader(decoded)
+            break
+        except (ValueError, SyntaxError, TypeError, json.JSONDecodeError):
+            continue
+    if not isinstance(parsed, (dict, list)):
+        return []
+    fragments: list[str] = []
+
+    def add(label: object, value: object) -> None:
+        if not isinstance(label, str) or not _is_identifier_label(label):
+            return
+        if isinstance(value, (str, int, float)) and not isinstance(value, bool):
+            text = " ".join(str(value).split())
+            if text:
+                fragment = f"{label}: {text}"
+                if fragment not in fragments:
+                    fragments.append(fragment)
+
+    def walk(value: object) -> None:
+        if isinstance(value, dict):
+            label = value.get("label")
+            if label is None:
+                label = value.get("name") if _is_identifier_label(str(value.get("name", ""))) else None
+            if label is not None:
+                add(label, value.get("value", value.get("values")))
+            for key, child in value.items():
+                if _is_identifier_label(str(key)):
+                    if isinstance(child, list):
+                        for item in child:
+                            add(key, item)
+                    else:
+                        add(key, child)
+                if isinstance(child, (dict, list)):
+                    walk(child)
+        elif isinstance(value, list):
+            for item in value:
+                walk(item)
+
+    walk(parsed)
+    return fragments
+
+
+def _is_identifier_label(value: str) -> bool:
+    compact = re.sub(r"[^a-z0-9]", "", value.casefold())
+    return compact in _IDENTIFIER_KEYS
 
 
 def _failure(message: str, code: str = "SOURCE_RETRIEVAL_FAILED") -> RetrievalResult:

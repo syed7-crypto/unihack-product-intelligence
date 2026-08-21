@@ -31,6 +31,7 @@ SourceKind = Literal["webpage", "pdf", "unknown"]
 CandidateStatus = Literal["candidate", "rejected"]
 DiscoveryStatus = Literal["found", "no_candidates", "failed"]
 VerificationStatus = Literal["verified", "verified_secondary", "failed", "rejected"]
+DEFAULT_MAX_VERIFICATION_CANDIDATES = 3
 DiscoveryFailureCode = Literal["SOURCE_RETRIEVAL_FAILED", "NO_TRUSTWORTHY_SOURCE"]
 
 
@@ -623,12 +624,16 @@ def discover_and_verify_sources(
     brand_reference: ReferenceResolutionResult | None = None,
     verified_source_history=None,
     max_results_per_query: int = 10,
+    max_verification_candidates: int = DEFAULT_MAX_VERIFICATION_CANDIDATES,
 ) -> DiscoveredSourceVerificationResult:
     """Discover candidates, then verify only policy-approved URLs.
 
     The enrichment provider remains the sole authority for retrieval and exact
     MPN verification. This function never creates normalized sources itself.
     """
+    if max_verification_candidates < 1:
+        raise ValueError("max_verification_candidates must be positive.")
+
     discovery = discover_manufacturer_sources(
         catalogue_row,
         policy,
@@ -656,6 +661,7 @@ def discover_and_verify_sources(
             candidate.discovery_rank,
         ),
     )
+    attempted_candidates = 0
     for candidate in ranked_candidates:
         if candidate.status != "candidate":
             diagnostics.append(
@@ -681,6 +687,27 @@ def discover_and_verify_sources(
                 )
             )
             continue
+        if verified_sources:
+            diagnostics.append(
+                _diagnostic(
+                    candidate,
+                    "rejected",
+                    "An earlier candidate verified successfully; candidate was not fetched.",
+                    "CANDIDATE_NOT_ATTEMPTED_AFTER_SUCCESS",
+                )
+            )
+            continue
+        if attempted_candidates >= max_verification_candidates:
+            diagnostics.append(
+                _diagnostic(
+                    candidate,
+                    "rejected",
+                    "Candidate retrieval attempt limit was reached; candidate was not fetched.",
+                    "CANDIDATE_ATTEMPT_LIMIT",
+                )
+            )
+            continue
+        attempted_candidates += 1
         retrieval = verification_provider.retrieve_source(
             candidate.url,
             catalogue_row.Mfg_Part_Num,

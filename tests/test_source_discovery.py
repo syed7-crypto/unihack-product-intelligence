@@ -59,6 +59,119 @@ class SourceDiscoveryTests(unittest.TestCase):
             query_templates=("{part_number} {manufacturer}",),
         )
 
+    def _fallback_search(self, first_url: str, second_url: str) -> InMemorySourceSearchProvider:
+        return InMemorySourceSearchProvider(
+            {
+                "59210 Hunter Fan Company": [
+                    SearchResult(url=first_url, title="59210 Hunter Fan Company"),
+                    SearchResult(url=second_url, title="59210 Hunter Fan Company"),
+                ]
+            }
+        )
+
+    def _valid_payload(self) -> RetrievedPayload:
+        return RetrievedPayload(
+            200,
+            {"content-type": "text/html"},
+            b"<h1>Hunter Fan Company 59210</h1><p>52\" BZ Sent Hunter Fan</p>",
+        )
+
+    def _fallback_result(self, first_response, second_response):
+        first = "https://hunterfan.com/first/59210"
+        second = "https://hunterfan.com/second/59210"
+        fetcher = Mock(side_effect=[first_response, second_response])
+        result = discover_and_verify_sources(
+            catalogue_row(),
+            self.policy("hunterfan.com"),
+            self._fallback_search(first, second),
+            ManufacturerEnrichmentProvider(
+                approved_domains={"hunterfan.com"}, fetcher=fetcher
+            ),
+        )
+        return result, fetcher
+
+    def test_timeout_top_candidate_falls_back_to_second(self) -> None:
+        result, fetcher = self._fallback_result(
+            TimeoutError("timed out"), self._valid_payload()
+        )
+
+        self.assertEqual([source.url for source in result.verified_sources], [
+            "https://hunterfan.com/second/59210"
+        ])
+        self.assertEqual(fetcher.call_count, 2)
+        self.assertEqual(result.diagnostics[0].code, "SOURCE_RETRIEVAL_FAILED")
+
+    def test_http_failure_top_candidate_falls_back_to_second(self) -> None:
+        result, fetcher = self._fallback_result(
+            RetrievedPayload(403, {"content-type": "text/html"}, b"blocked"),
+            self._valid_payload(),
+        )
+
+        self.assertEqual(len(result.verified_sources), 1)
+        self.assertEqual(fetcher.call_count, 2)
+
+    def test_empty_or_unsupported_top_candidate_falls_back_to_second(self) -> None:
+        result, fetcher = self._fallback_result(
+            RetrievedPayload(200, {"content-type": "text/html"}, b""),
+            self._valid_payload(),
+        )
+
+        self.assertEqual(len(result.verified_sources), 1)
+        self.assertEqual(fetcher.call_count, 2)
+
+    def test_unsupported_top_candidate_falls_back_to_second(self) -> None:
+        result, fetcher = self._fallback_result(
+            RetrievedPayload(200, {"content-type": "application/octet-stream"}, b"data"),
+            self._valid_payload(),
+        )
+
+        self.assertEqual(len(result.verified_sources), 1)
+        self.assertEqual(fetcher.call_count, 2)
+
+    def test_exact_mpn_mismatch_does_not_stop_next_candidate(self) -> None:
+        result, fetcher = self._fallback_result(
+            RetrievedPayload(
+                200,
+                {"content-type": "text/html"},
+                b"<h1>Hunter Fan Company 59210BF</h1><p>52\" BZ Sent Hunter Fan</p>",
+            ),
+            self._valid_payload(),
+        )
+
+        self.assertEqual(len(result.verified_sources), 1)
+        self.assertEqual(fetcher.call_count, 2)
+        self.assertTrue(any(item.verification_status == "failed" for item in result.diagnostics))
+
+    def test_identity_conflict_does_not_stop_next_candidate(self) -> None:
+        result, fetcher = self._fallback_result(
+            RetrievedPayload(
+                200,
+                {"content-type": "text/html"},
+                b"<h1>Other Manufacturer 59210</h1><p>Other product</p>",
+            ),
+            self._valid_payload(),
+        )
+
+        self.assertEqual(len(result.verified_sources), 1)
+        self.assertEqual(fetcher.call_count, 2)
+        self.assertTrue(any(item.verification_status == "failed" for item in result.diagnostics))
+
+    def test_source_attempts_are_bounded(self) -> None:
+        urls = [f"https://hunterfan.com/candidate{i}/59210" for i in range(5)]
+        search = InMemorySourceSearchProvider({
+            "59210 Hunter Fan Company": [SearchResult(url=url, title="59210") for url in urls]
+        })
+        fetcher = Mock(side_effect=TimeoutError("timed out"))
+        result = discover_and_verify_sources(
+            catalogue_row(),
+            self.policy("hunterfan.com"),
+            search,
+            ManufacturerEnrichmentProvider(approved_domains={"hunterfan.com"}, fetcher=fetcher),
+        )
+
+        self.assertEqual(fetcher.call_count, 3)
+        self.assertTrue(any(item.code == "CANDIDATE_ATTEMPT_LIMIT" for item in result.diagnostics))
+
     def test_query_generation_is_deterministic_and_uses_resolved_identity(self) -> None:
         queries = generate_discovery_queries(
             catalogue_row(),

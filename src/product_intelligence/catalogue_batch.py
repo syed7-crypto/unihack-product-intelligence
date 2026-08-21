@@ -308,21 +308,6 @@ def _discover_for_row(
         )
         for error in verification.discovery.errors
     )
-    if (
-        verification.selected_ranking is not None
-        and verification.selected_ranking.decision == "plausible"
-    ):
-        diagnostics.append(
-            EnrichmentSourceDiagnostic(
-                url="",
-                success=False,
-                code="CANDIDATE_PLAUSIBLE",
-                error=(
-                    "Selected source is plausible but not strong enough for automatic READY: "
-                    + "; ".join(verification.selected_ranking.reasons)
-                ),
-            )
-        )
     if not verification.verified_sources and not diagnostics:
         reason = (
             "No verified manufacturer source was found."
@@ -353,22 +338,9 @@ def _discover_for_row(
 
 def _runtime_outcome(result: IdentityResolutionResult) -> _DiscoveryOutcome:
     if result.state == "resolvable":
-        diagnostics = []
-        if result.selected_ranking is not None and result.selected_ranking.decision == "plausible":
-            diagnostics.append(
-                EnrichmentSourceDiagnostic(
-                    url="",
-                    success=False,
-                    code="CANDIDATE_PLAUSIBLE",
-                    error=(
-                        "Selected runtime source is plausible but not strong enough for automatic READY: "
-                        + "; ".join(result.selected_ranking.reasons)
-                    ),
-                )
-            )
         return _DiscoveryOutcome(
             verified_sources=result.verified_sources,
-            diagnostics=diagnostics,
+            diagnostics=[],
             runtime_identity=result,
         )
     if result.failure_code == "SOURCE_RETRIEVAL_FAILED":

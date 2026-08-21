@@ -8,6 +8,7 @@ from src.product_intelligence.manufacturer_enrichment import (
     ManufacturerEnrichmentProvider,
     ManufacturerSource,
     RetrievedPayload,
+    _extract_html_text,
 )
 
 
@@ -268,6 +269,86 @@ class ManufacturerEnrichmentTests(unittest.TestCase):
 
         self.assertFalse(result.success)
         self.assertEqual(result.code, "EXACT_MPN_MISMATCH")
+
+    def test_html_entity_encoded_labeled_attribute_can_verify_exact_mpn(self) -> None:
+        provider = ManufacturerEnrichmentProvider(
+            approved_domains={"example-manufacturer.com"},
+            fetcher=lambda url, timeout: payload(
+                b'<h1>Philips BR40 LED bulb</h1>'
+                b'<specification :specification-items="['
+                b'{&#34;label&#34;:&#34;EOC&#34;,&#34;value&#34;:&#34;576512&#34;}'
+                b']"></specification>'
+            ),
+        )
+
+        result = provider.retrieve_source(
+            "https://example-manufacturer.com/products/046677576516",
+            "576512",
+            expected_identity="Philips",
+            expected_description="576512 65W Led BR40",
+        )
+
+        self.assertTrue(result.success)
+        assert result.source is not None
+        normalized = provider.to_normalized_source(result.source)
+        self.assertIn("EOC: 576512", normalized.extracted_text)
+
+    def test_json_attribute_product_identifier_is_supported(self) -> None:
+        provider = ManufacturerEnrichmentProvider(
+            approved_domains={"example-manufacturer.com"},
+            fetcher=lambda url, timeout: payload(
+                b'<h1>Example Product</h1>'
+                b"<div data-product='{\"manufacturer_part_number\":\"ABC-123\"}'></div>"
+            ),
+        )
+
+        result = provider.retrieve_source(
+            "https://example-manufacturer.com/products/product",
+            "ABC-123",
+            expected_identity="Example",
+            expected_description="Example Product",
+        )
+
+        self.assertTrue(result.success)
+
+    def test_unrelated_attributes_do_not_become_mpn_evidence(self) -> None:
+        provider = ManufacturerEnrichmentProvider(
+            approved_domains={"example-manufacturer.com"},
+            fetcher=lambda url, timeout: payload(
+                b'<h1>Example Product</h1>'
+                b'<div data-tracking=\'{"id":"576512"}\' data-count="576512"></div>'
+            ),
+        )
+
+        result = provider.retrieve_source(
+            "https://example-manufacturer.com/products/product",
+            "576512",
+            expected_identity="Example",
+            expected_description="Example Product",
+        )
+
+        self.assertFalse(result.success)
+        self.assertEqual(result.code, "EXACT_MPN_MISMATCH")
+
+    def test_malformed_structured_attribute_does_not_crash_or_verify(self) -> None:
+        text, title, headings = _extract_html_text(
+            b'<h1>Example Product</h1><div data-product="{not valid json}"></div>'
+        )
+
+        self.assertIn("Example Product", text)
+        self.assertNotIn("not valid json", text)
+        self.assertEqual(title, "")
+        self.assertEqual(headings, ["Example Product"])
+
+    def test_json_ld_remains_excluded_from_search_snippet_or_attribute_evidence(self) -> None:
+        text, _, _ = _extract_html_text(
+            b'<script type="application/ld+json">'
+            b'{"mpn":"576512","brand":{"name":"Example"}}'
+            b'</script><h1>Example Product</h1>'
+        )
+
+        self.assertIn("Example Product", text)
+        self.assertNotIn("576512", text)
 
 
 if __name__ == "__main__":

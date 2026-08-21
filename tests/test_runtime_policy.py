@@ -176,6 +176,74 @@ class RuntimePolicyTests(unittest.TestCase):
         self.assertEqual(result.state, "unknown")
         self.assertIsNone(result.runtime_policy)
 
+    def test_discovered_manufacturer_conflict_is_not_silently_overwritten(self) -> None:
+        catalogue = row("578808", manufacturer="Festool USA (FESTO)")
+        url = "https://festo.example/product/578808"
+        result = resolve_identity_and_source_policy(
+            catalogue,
+            search_provider=InMemorySourceSearchProvider(
+                {"578808": [SearchResult(url=url)]}
+            ),
+            enrichment_provider=self.provider([], b"<h1>Festo 578808</h1>"),
+            authority_verifier=lambda _row, _candidate: RuntimeAuthorityEvidence(
+                controlled_identity="Festo",
+                identity_kind="manufacturer",
+                domain="festo.example",
+                reason="Verified test manufacturer identity.",
+            ),
+        )
+
+        self.assertEqual(result.state, "unknown")
+        self.assertEqual(result.failure_code, "MANUFACTURER_IDENTITY_CONFLICT")
+        self.assertIn("Festool USA", result.diagnostics[0])
+        self.assertEqual(catalogue.Part_Manuf, "Festool USA (FESTO)")
+
+    def test_discovered_manufacturer_matching_normalized_catalogue_identity_is_allowed(self) -> None:
+        catalogue = row("RUNTIME-1", manufacturer="Acme Tools (ACME)")
+        url = "https://acme.example/product/RUNTIME-1"
+        result = resolve_identity_and_source_policy(
+            catalogue,
+            search_provider=InMemorySourceSearchProvider(
+                {"RUNTIME-1": [SearchResult(url=url)]}
+            ),
+            enrichment_provider=self.provider([]),
+            authority_verifier=lambda _row, _candidate: RuntimeAuthorityEvidence(
+                controlled_identity="Acme Tools",
+                identity_kind="manufacturer",
+                domain="acme.example",
+                reason="Verified test manufacturer identity.",
+            ),
+        )
+
+        self.assertEqual(result.state, "resolvable")
+        self.assertEqual(result.resolved_identity, "Acme Tools")
+
+    def test_conflicting_runtime_identity_becomes_review_in_batch(self) -> None:
+        catalogue = row("578808", manufacturer="Festool USA")
+        result = run_catalogue_batch(
+            [catalogue],
+            schema(),
+            discovery_enabled=True,
+            runtime_policy_resolution_enabled=True,
+            search_provider=InMemorySourceSearchProvider(
+                {"578808": [SearchResult(url="https://festo.example/product/578808")]}
+            ),
+            provider=self.provider([], b"<h1>Festo 578808</h1>"),
+            runtime_authority_verifier=lambda _row, _candidate: RuntimeAuthorityEvidence(
+                controlled_identity="Festo",
+                identity_kind="manufacturer",
+                domain="festo.example",
+                reason="Verified test manufacturer identity.",
+            ),
+        )
+
+        self.assertEqual(result.row_results[0].review.status, "needs_review")
+        self.assertIn(
+            "MANUFACTURER_IDENTITY_CONFLICT",
+            {issue.code for issue in result.row_results[0].review.issues},
+        )
+        self.assertEqual(result.row_results[0].catalogue_row.Part_Manuf, "Festool USA")
+
     def test_product_first_rejects_first_domain_and_tries_second(self) -> None:
         first = "https://first.example/product/RUNTIME-1"
         second = "https://second.example/product/RUNTIME-1"
@@ -187,7 +255,11 @@ class RuntimePolicyTests(unittest.TestCase):
 
         def fetcher(url: str, timeout: float) -> RetrievedPayload:
             fetched.append(url)
-            body = b"<title>First Company</title>" if url == first else b"<title>Second Manufacturer</title><h1>RUNTIME-1</h1>"
+            body = (
+                b"<title>First Company</title>"
+                if url == first
+                else b"<title>Second Manufacturer</title><h1>Manufacturer: Second Manufacturer</h1><p>RUNTIME-1</p>"
+            )
             return RetrievedPayload(200, {"content-type": "text/html"}, body)
 
         result = resolve_identity_and_source_policy(
@@ -217,6 +289,131 @@ class RuntimePolicyTests(unittest.TestCase):
         )
         self.assertEqual(result.state, "unknown")
         self.assertIsNone(result.runtime_policy)
+
+    def test_multiple_coherent_page_local_signals_establish_catalogue_brand(self) -> None:
+        url = "https://philips.example/product/RUNTIME-1"
+        body = (
+            b"<html><head>"
+            b'<title>Philips LED Product</title>'
+            b'<meta property="og:title" content="Philips LED Product">'
+            b'<meta property="og:site_name" content="Philips lighting">'
+            b"</head><body><h1>Philips LED Product</h1>"
+            b"<p>Model RUNTIME-1</p></body></html>"
+        )
+        candidate = row("RUNTIME-1")
+        candidate.DIB_Brand = "Philips"
+        result = resolve_identity_and_source_policy(
+            candidate,
+            search_provider=InMemorySourceSearchProvider({
+                'site:philips.example "RUNTIME-1"': [SearchResult(url=url)]
+            }),
+            enrichment_provider=self.provider([], body),
+            candidate_domain_provider=lambda _row: [RuntimeDomainCandidate(domain="philips.example")],
+        )
+
+        self.assertEqual(result.state, "resolvable")
+        self.assertEqual(result.resolved_identity, "Philips")
+        self.assertIn("title", result.runtime_policy.governance_reason if result.runtime_policy else "")
+
+    def test_domain_alone_does_not_establish_identity(self) -> None:
+        url = "https://philips.example/product/RUNTIME-1"
+        result = resolve_identity_and_source_policy(
+            row(),
+            search_provider=InMemorySourceSearchProvider({
+                'site:philips.example "RUNTIME-1"': [SearchResult(url=url)]
+            }),
+            enrichment_provider=self.provider([], b"<h1>RUNTIME-1</h1>"),
+            candidate_domain_provider=lambda _row: [RuntimeDomainCandidate(
+                domain="philips.example", identity_hint="philips.example"
+            )],
+        )
+
+        self.assertEqual(result.state, "unknown")
+        self.assertIsNone(result.runtime_policy)
+
+    def test_conflicting_unlabeled_page_identity_is_not_resolved_by_signal_count(self) -> None:
+        url = "https://candidate.example/product/RUNTIME-1"
+        body = (
+            b"<title>Philips LED Product</title>"
+            b'<meta property="og:site_name" content="Philips lighting">'
+            b"<h1>Philips LED Product</h1>"
+            b"<p>Manufacturer: Festo</p><p>Festo product Model RUNTIME-1</p>"
+        )
+        candidate = row("RUNTIME-1")
+        candidate.DIB_Brand = "Philips"
+        result = resolve_identity_and_source_policy(
+            candidate,
+            search_provider=InMemorySourceSearchProvider({
+                'site:candidate.example "RUNTIME-1"': [SearchResult(url=url)]
+            }),
+            enrichment_provider=self.provider([], body),
+            candidate_domain_provider=lambda _row: [RuntimeDomainCandidate(domain="candidate.example")],
+        )
+
+        self.assertEqual(result.state, "unknown")
+        self.assertEqual(result.failure_code, "MANUFACTURER_IDENTITY_CONFLICT")
+        self.assertTrue(any("Catalogue identity conflicts" in item for item in result.diagnostics))
+
+    def test_arbitrary_body_word_smart_cannot_become_identity(self) -> None:
+        url = "https://philips.example/product/RUNTIME-1"
+        body = (
+            b"<title>Philips LED Product</title>"
+            b'<meta property="og:site_name" content="Philips lighting">'
+            b"<h1>Philips LED Product</h1><p>Smart product Model RUNTIME-1</p>"
+        )
+        candidate = row("RUNTIME-1")
+        candidate.DIB_Brand = "Philips"
+        result = resolve_identity_and_source_policy(
+            candidate,
+            search_provider=InMemorySourceSearchProvider({
+                'site:philips.example "RUNTIME-1"': [SearchResult(url=url)]
+            }),
+            enrichment_provider=self.provider([], body),
+            candidate_domain_provider=lambda _row: [RuntimeDomainCandidate(domain="philips.example")],
+        )
+
+        self.assertEqual(result.state, "resolvable")
+        self.assertEqual(result.resolved_identity, "Philips")
+        self.assertNotEqual(result.resolved_identity, "Smart")
+
+    def test_arbitrary_body_word_this_cannot_become_identity(self) -> None:
+        url = "https://timbertech.example/product/RUNTIME-1"
+        body = (
+            b"<title>TimberTech Decking Product</title>"
+            b'<meta property="og:site_name" content="TimberTech">'
+            b"<h1>TimberTech Decking</h1><p>This product is durable. Model RUNTIME-1</p>"
+        )
+        candidate = row("RUNTIME-1")
+        candidate.DIB_Brand = "TIMBERTECH"
+        result = resolve_identity_and_source_policy(
+            candidate,
+            search_provider=InMemorySourceSearchProvider({
+                'site:timbertech.example "RUNTIME-1"': [SearchResult(url=url)]
+            }),
+            enrichment_provider=self.provider([], body),
+            candidate_domain_provider=lambda _row: [RuntimeDomainCandidate(domain="timbertech.example")],
+        )
+
+        self.assertEqual(result.state, "resolvable")
+        self.assertEqual(result.resolved_identity.casefold(), "timbertech")
+        self.assertNotEqual(result.resolved_identity, "This")
+
+    def test_generic_description_alone_cannot_establish_manufacturer(self) -> None:
+        url = "https://unknown.example/product/RUNTIME-1"
+        body = b"<title>Product Details</title><p>This product is useful. Model RUNTIME-1</p>"
+        candidate = row("RUNTIME-1")
+        candidate.DIB_Brand = "Expected Brand"
+        result = resolve_identity_and_source_policy(
+            candidate,
+            search_provider=InMemorySourceSearchProvider({
+                'site:unknown.example "RUNTIME-1"': [SearchResult(url=url)]
+            }),
+            enrichment_provider=self.provider([], body),
+            candidate_domain_provider=lambda _row: [RuntimeDomainCandidate(domain="unknown.example")],
+        )
+
+        self.assertEqual(result.state, "unknown")
+        self.assertIsNone(result.resolved_identity)
 
     def test_product_first_accepts_explicit_parent_company_relationship(self) -> None:
         url = "https://dewalt.example/product/RUNTIME-1"
@@ -446,7 +643,7 @@ class RuntimePolicyTests(unittest.TestCase):
             [row()], schema(), discovery_enabled=True,
             runtime_policy_resolution_enabled=True,
             search_provider=InMemorySourceSearchProvider({"RUNTIME-1": [SearchResult(url=url)]}),
-            provider=self.provider([], b"<h1>Hunter RUNTIME-1</h1>"),
+            provider=self.provider([], b"<h1>Brand: Hunter</h1><p>RUNTIME-1</p>"),
             runtime_authority_verifier=lambda _row, _candidate: RuntimeAuthorityEvidence(
                 controlled_identity="Runtime Manufacturer",
                 identity_kind="manufacturer",
@@ -482,7 +679,7 @@ class RuntimePolicyTests(unittest.TestCase):
             search_provider=InMemorySourceSearchProvider({
                 'site:runtime.example "RUNTIME-1"': [SearchResult(url=url)]
             }),
-            provider=self.provider([], b"<h1>Hunter RUNTIME-1</h1>"),
+            provider=self.provider([], b"<h1>Brand: Hunter</h1><p>RUNTIME-1 runtime fixture</p>"),
             runtime_candidate_domain_provider=lambda _row: [RuntimeDomainCandidate(
                 domain="runtime.example", identity_hint="Hunter"
             )],
@@ -500,13 +697,95 @@ class RuntimePolicyTests(unittest.TestCase):
             search_provider=InMemorySourceSearchProvider({
                 'site:milwaukeetool.example "RUNTIME-1"': [SearchResult(url=url)]
             }),
-            enrichment_provider=self.provider([], b"<h1>Milwaukee Tool RUNTIME-1</h1>"),
+            enrichment_provider=self.provider([], b"<h1>Brand: Milwaukee Tool</h1><p>RUNTIME-1</p>"),
             candidate_domain_provider=lambda _row: [RuntimeDomainCandidate(
                 domain="milwaukeetool.example", identity_hint="milwaukeetool"
             )],
         )
         self.assertEqual(result.state, "resolvable")
-        self.assertEqual(result.resolved_identity, "milwaukeetool")
+        self.assertEqual(result.resolved_identity, "Milwaukee Tool")
+
+    def test_retailer_domain_uses_page_manufacturer_not_hostname(self) -> None:
+        catalogue = row("RUNTIME-1")
+        catalogue.DIB_Brand = "Mirka"
+        result = resolve_identity_and_source_policy(
+            catalogue,
+            search_provider=InMemorySourceSearchProvider({
+                'site:beavertools.example "RUNTIME-1"': [
+                    SearchResult(url="https://beavertools.example/product/RUNTIME-1")
+                ]
+            }),
+            enrichment_provider=self.provider(
+                [], b"<h1>Brand: Mirka</h1><p>RUNTIME-1</p>"
+            ),
+            candidate_domain_provider=lambda _row: [RuntimeDomainCandidate(
+                domain="beavertools.example", identity_hint="beavertools"
+            )],
+        )
+
+        self.assertEqual(result.state, "resolvable")
+        self.assertEqual(result.resolved_identity, "Mirka")
+
+    def test_official_domain_hostname_is_not_used_as_identity(self) -> None:
+        catalogue = row("RUNTIME-1")
+        catalogue.DIB_Brand = "Milwaukee"
+        result = resolve_identity_and_source_policy(
+            catalogue,
+            search_provider=InMemorySourceSearchProvider({
+                'site:milwaukeetool.example "RUNTIME-1"': [
+                    SearchResult(url="https://milwaukeetool.example/product/RUNTIME-1")
+                ]
+            }),
+            enrichment_provider=self.provider(
+                [], b"<h1>Brand: Milwaukee</h1><p>RUNTIME-1</p>"
+            ),
+            candidate_domain_provider=lambda _row: [RuntimeDomainCandidate(
+                domain="milwaukeetool.example", identity_hint="milwaukeetool"
+            )],
+        )
+
+        self.assertEqual(result.state, "resolvable")
+        self.assertEqual(result.resolved_identity, "Milwaukee")
+        self.assertNotEqual(result.resolved_identity, "milwaukeetool")
+
+    def test_page_conflicting_manufacturer_still_creates_identity_conflict(self) -> None:
+        catalogue = row("578808", manufacturer="Festool USA")
+        result = resolve_identity_and_source_policy(
+            catalogue,
+            search_provider=InMemorySourceSearchProvider({
+                'site:festo.example "578808"': [
+                    SearchResult(url="https://festo.example/product/578808")
+                ]
+            }),
+            enrichment_provider=self.provider(
+                [], b"<h1>Manufacturer: Festo</h1><p>578808 runtime fixture</p>"
+            ),
+            candidate_domain_provider=lambda _row: [RuntimeDomainCandidate(
+                domain="festo.example", identity_hint="festo"
+            )],
+        )
+
+        self.assertEqual(result.state, "unknown")
+        self.assertEqual(result.failure_code, "MANUFACTURER_IDENTITY_CONFLICT")
+
+    def test_domain_only_identity_is_insufficient(self) -> None:
+        result = resolve_identity_and_source_policy(
+            row("RUNTIME-1"),
+            search_provider=InMemorySourceSearchProvider({
+                'site:beavertools.example "RUNTIME-1"': [
+                    SearchResult(url="https://beavertools.example/product/RUNTIME-1")
+                ]
+            }),
+            enrichment_provider=self.provider(
+                [], b"<h1>beavertools RUNTIME-1</h1>"
+            ),
+            candidate_domain_provider=lambda _row: [RuntimeDomainCandidate(
+                domain="beavertools.example", identity_hint="beavertools"
+            )],
+        )
+
+        self.assertEqual(result.state, "unknown")
+        self.assertNotEqual(result.resolved_identity, "beavertools")
 
 
 if __name__ == "__main__":

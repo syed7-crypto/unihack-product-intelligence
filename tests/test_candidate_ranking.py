@@ -1,7 +1,11 @@
 import unittest
 
 from src.product_intelligence.candidate_ranking import rank_candidate
+from src.product_intelligence.candidate_ranking import CandidateRanking
+from src.product_intelligence.catalogue_batch import _runtime_outcome
+from src.product_intelligence.manufacturer_enrichment import ManufacturerSource
 from src.product_intelligence.review import build_review_report
+from src.product_intelligence.runtime_policy import IdentityResolutionResult
 
 
 class CandidateRankingTests(unittest.TestCase):
@@ -95,11 +99,55 @@ class CandidateRankingTests(unittest.TestCase):
         self.assertEqual(result.decision, "plausible")
         self.assertNotEqual(result.decision, "strong")
 
-    def test_plausible_selection_creates_review_without_blocking_verified_source(self) -> None:
+    def test_successful_verification_takes_precedence_over_candidate_ranking(self) -> None:
         report = build_review_report(
             pipeline_result=None,
             source_diagnostics=[
                 type("SourceDiagnostic", (), {"success": True, "url": "https://source.example"})(),
+            ],
+            reference_resolution=None,
+            mapping_diagnostics=[],
+            evaluation_comparison=None,
+        )
+
+        self.assertEqual(report.status, "ready")
+
+    def test_plausible_verified_runtime_source_is_not_downgraded(self) -> None:
+        result = IdentityResolutionResult(
+            state="resolvable",
+            resolved_identity="Example Manufacturer",
+            identity_kind="manufacturer",
+            approved_domains=("example.com",),
+            reason="Verified runtime source.",
+            verified_sources=[
+                ManufacturerSource(
+                    url="https://example.com/product",
+                    source_type="web",
+                    manufacturer_domain="example.com",
+                    source_name="product",
+                    content="Example Manufacturer product",
+                    exact_mpn_verified=True,
+                )
+            ],
+            selected_ranking=CandidateRanking(
+                decision="plausible",
+                score=45,
+                reasons=["Source is not an approved manufacturer domain."],
+                page_type="product",
+                visible_mpn_match=True,
+                identity_match=True,
+            ),
+        )
+
+        outcome = _runtime_outcome(result)
+
+        self.assertEqual(len(outcome.verified_sources), 1)
+        self.assertEqual(outcome.diagnostics, [])
+
+    def test_plausible_candidate_without_successful_verification_requires_review(self) -> None:
+        report = build_review_report(
+            pipeline_result=None,
+            source_diagnostics=[
                 type(
                     "RankingDiagnostic",
                     (),

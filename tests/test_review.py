@@ -204,7 +204,7 @@ class ReviewLayerTests(unittest.TestCase):
         codes = {issue.code for issue in report.issues}
         self.assertIn("ATTRIBUTE_CONFLICT", codes)
         self.assertIn("LOW_CONFIDENCE", codes)
-        self.assertEqual(report.status, "ready")
+        self.assertEqual(report.status, "needs_review")
 
     def test_unsupported_uom_blocks_attribute_but_missing_fixed_slot_does_not(self) -> None:
         result = pipeline_result()
@@ -225,7 +225,7 @@ class ReviewLayerTests(unittest.TestCase):
 
         codes = {issue.code for issue in report.issues}
         self.assertIn("UOM_NOT_APPROVED", codes)
-        self.assertEqual(report.status, "ready")
+        self.assertEqual(report.status, "needs_review")
 
         missing_mapping = build_review_report(
             pipeline_result=result,
@@ -267,6 +267,42 @@ class ReviewLayerTests(unittest.TestCase):
                     reason="Mapped using official controlled mapping and validated evidence.",
                 )
             ],
+            evaluation_comparison=None,
+        )
+
+        self.assertEqual(report.status, "ready")
+
+    def test_verified_source_with_no_accepted_attributes_requires_review(self) -> None:
+        result = pipeline_result()
+        result.validation.attributes[0].status = "not_found"
+        result.validation.attributes[0].values = []
+
+        report = build_review_report(
+            pipeline_result=result,
+            source_diagnostics=[source_diagnostic(success=True)],
+            reference_resolution=None,
+            mapping_diagnostics=[],
+            evaluation_comparison=None,
+        )
+
+        self.assertEqual(report.status, "needs_review")
+        self.assertIn("NO_ACCEPTED_ATTRIBUTES", {issue.code for issue in report.issues})
+
+    def test_partial_attribute_failures_can_still_be_ready(self) -> None:
+        result = pipeline_result()
+        result.extracted_attributes[0].rejected_attributes = [
+            RejectedAttribute(
+                name="optional_attribute",
+                code="EVIDENCE_MISSING",
+                message="Optional attribute was not supported by the source.",
+            )
+        ]
+
+        report = build_review_report(
+            pipeline_result=result,
+            source_diagnostics=[source_diagnostic(success=True)],
+            reference_resolution=None,
+            mapping_diagnostics=[],
             evaluation_comparison=None,
         )
 

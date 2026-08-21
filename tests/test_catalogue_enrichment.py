@@ -2,7 +2,7 @@ import json
 import unittest
 from pathlib import Path
 
-from src.product_intelligence.catalog_input import load_catalog_rows, select_catalog_row
+from src.product_intelligence.catalog_input import CatalogInputRow, load_catalog_rows, select_catalog_row
 from src.product_intelligence.catalogue_enrichment import (
     AttributeDeliveryMapping,
     AttributeDeliveryMappings,
@@ -186,6 +186,97 @@ class CatalogueEnrichmentTests(unittest.TestCase):
                 ),
             ]
         )
+
+    def direct_identity_fixture(
+        self,
+        identity_line: str,
+        *,
+        manufacturer: str,
+        dib_brand: str = "-- No DIB Brand --",
+    ) -> CatalogueEnrichmentResult:
+        row = CatalogInputRow(
+            Mfg_Part_Num=FIXTURE_PART,
+            Part_Desc="Fixture product",
+            E1_Brand="-- Unbranded --",
+            Unilog_Brand="-- No Unilog Brand --",
+            DIB_Brand=dib_brand,
+            Part_Manuf=manufacturer,
+        )
+        url = "https://verified.example/fixture"
+        source = NormalizedSource(
+            source_id="direct-identity-source",
+            source_type="web",
+            source_name="verified-source.html",
+            extracted_text=(
+                f"{identity_line}\n{FIXTURE_PART}\nFixture product\n"
+                "Material: Stainless Steel\nVoltage Rating: 120 V"
+            ),
+            locations=(SourceLocation("document"),),
+        )
+        sources = {url: source}
+        return enrich_catalogue_row(
+            row,
+            [url],
+            self.schema,
+            provider=FixtureProvider(sources),
+            client=self.make_client(sources),
+        )
+
+    def test_direct_verified_page_manufacturer_resolves_row_reference(self) -> None:
+        result = self.direct_identity_fixture(
+            "Manufacturer: Acme Manufacturing",
+            manufacturer="Acme Manufacturing (ACME)",
+        )
+
+        self.assertEqual(result.reference_resolution.manufacturer.status, "resolved")
+        self.assertEqual(
+            result.reference_resolution.manufacturer.resolved_value,
+            "Acme Manufacturing",
+        )
+        self.assertNotIn("MANUFACTURER_UNRESOLVED", {issue.code for issue in result.review.issues})
+
+    def test_direct_verified_page_brand_resolves_separately_and_preserves_raw_manufacturer(self) -> None:
+        result = self.direct_identity_fixture(
+            "Brand: Acme Brand",
+            manufacturer="Distributor Co (DIST)",
+            dib_brand="Acme Brand",
+        )
+
+        self.assertEqual(result.reference_resolution.runtime_identity.reference_type, "brand")
+        self.assertEqual(result.reference_resolution.runtime_identity.resolved_value, "Acme Brand")
+        self.assertEqual(result.reference_resolution.manufacturer.status, "unresolved")
+        self.assertEqual(result.catalogue_row.Part_Manuf, "Distributor Co (DIST)")
+        self.assertNotIn("MANUFACTURER_UNRESOLVED", {issue.code for issue in result.review.issues})
+
+    def test_verified_source_without_explicit_identity_remains_unresolved(self) -> None:
+        result = self.direct_identity_fixture(
+            "Product page",
+            manufacturer="Distributor Co (DIST)",
+        )
+
+        self.assertEqual(result.reference_resolution.manufacturer.status, "unresolved")
+        self.assertIn("MANUFACTURER_UNRESOLVED", {issue.code for issue in result.review.issues})
+
+    def test_hostname_only_does_not_create_a_row_identity(self) -> None:
+        result = self.direct_identity_fixture(
+            "verified.example Fixture product",
+            manufacturer="Distributor Co (DIST)",
+        )
+
+        self.assertEqual(result.reference_resolution.manufacturer.status, "unresolved")
+        self.assertIn("MANUFACTURER_UNRESOLVED", {issue.code for issue in result.review.issues})
+
+    def test_direct_page_manufacturer_conflict_remains_reviewable(self) -> None:
+        result = self.direct_identity_fixture(
+            "Manufacturer: Festo",
+            manufacturer="Festool USA",
+        )
+
+        self.assertIn(
+            "MANUFACTURER_IDENTITY_CONFLICT",
+            {issue.code for issue in result.review.issues},
+        )
+        self.assertEqual(result.review.status, "needs_review")
 
     def test_complete_fixture_flow_preserves_sources_and_raw_fields(self) -> None:
         sources = self.make_sources()

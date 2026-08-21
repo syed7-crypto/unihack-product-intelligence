@@ -42,7 +42,7 @@ from .reference_data import (
     normalize_reference_value,
 )
 from .review import ReviewReport, build_review_report
-from .runtime_policy import IdentityResolutionResult
+from .runtime_policy import IdentityResolutionResult, _catalogue_identity_conflict
 
 
 AttributeDeliveryMapping = ControlledAttributeMapping
@@ -144,6 +144,7 @@ def enrich_catalogue_row(
 
     normalized_sources = []
     verified_source_contents = []
+    verified_source_identities: list[tuple[ManufacturerSource, str, str]] = []
     delivery_evidence: dict[str, DeliveryFieldEvidence] = {}
     diagnostics: list[EnrichmentSourceDiagnostic] = list(initial_source_diagnostics)
 
@@ -176,6 +177,9 @@ def enrich_catalogue_row(
             )
             continue
         normalized_sources.append(normalized)
+        identity = _extract_verified_source_identity(normalized.extracted_text)
+        if identity is not None:
+            verified_source_identities.append((source, identity[0], identity[1]))
         try:
             verified_source_contents.append(extract_verified_source_content(source, normalized))
         except Exception as error:
@@ -271,6 +275,9 @@ def enrich_catalogue_row(
             )
             continue
         normalized_sources.append(normalized)
+        identity = _extract_verified_source_identity(normalized.extracted_text)
+        if identity is not None:
+            verified_source_identities.append((source, identity[0], identity[1]))
         try:
             verified_source_contents.append(extract_verified_source_content(source, normalized))
         except Exception as error:
@@ -295,6 +302,55 @@ def enrich_catalogue_row(
                 exact_mpn_verified=source.exact_mpn_verified,
             )
         )
+
+    source_identity = _trusted_identity_from_verified_sources(
+        catalogue_row,
+        verified_source_identities,
+    )
+    if source_identity is None and verified_source_identities:
+        identity_values = {
+            (normalize_reference_value(value), kind)
+            for _source, value, kind in verified_source_identities
+        }
+        conflict = _catalogue_identity_conflict(
+            catalogue_row,
+            verified_source_identities[0][1],
+        )
+        if len(identity_values) > 1 or conflict is not None:
+            diagnostics.append(
+                EnrichmentSourceDiagnostic(
+                    url=verified_source_identities[0][0].url,
+                    success=False,
+                    source_type=verified_source_identities[0][0].source_type,
+                    source_name=verified_source_identities[0][0].source_name,
+                    exact_mpn_verified=True,
+                    code="MANUFACTURER_IDENTITY_CONFLICT",
+                    error=(
+                        conflict
+                        or "Verified sources provided different manufacturer/brand identities."
+                    ),
+                )
+            )
+    if runtime_identity is None and source_identity is not None:
+        identity_value, identity_kind, identity_source = source_identity
+        runtime_identity = IdentityResolutionResult(
+            state="resolvable",
+            resolved_identity=identity_value,
+            identity_kind=identity_kind,
+            approved_domains=(identity_source.manufacturer_domain,),
+            reason=(
+                "Trusted manufacturer/brand identity was extracted from the "
+                "verified source page; it is scoped to this row."
+            ),
+            verified_sources=[identity_source],
+        )
+        reference_resolution = _resolve_references(
+            catalogue_row,
+            manufacturer_reference,
+            brand_reference,
+            runtime_identity,
+        )
+        _map_resolved_identity(delivery_row, reference_resolution)
 
     _map_verified_source_metadata(delivery_row, diagnostics, catalogue_row)
     for content in verified_source_contents:
@@ -439,6 +495,43 @@ def _unresolved(reference_type: str, reason: str) -> ReferenceResolutionResult:
         reference_type=reference_type,
         reason=reason,
     )
+
+
+def _extract_verified_source_identity(
+    extracted_text: str,
+) -> tuple[str, Literal["manufacturer", "brand"]] | None:
+    """Extract only explicitly labelled identity from already verified text."""
+    patterns = (
+        ("manufacturer", r"(?im)^\s*manufacturer(?:\s+name)?\s*[:=-]\s*(.+?)\s*$"),
+        ("brand", r"(?im)^\s*brand(?:\s+name)?\s*[:=-]\s*(.+?)\s*$"),
+    )
+    for kind, pattern in patterns:
+        match = re.search(pattern, extracted_text)
+        if match:
+            value = re.sub(r"\s+", " ", match.group(1)).strip(" .,-")
+            if value:
+                return value, kind  # type: ignore[return-value]
+    return None
+
+
+def _trusted_identity_from_verified_sources(
+    row: CatalogInputRow,
+    identities: Sequence[tuple[ManufacturerSource, str, str]],
+) -> tuple[str, Literal["manufacturer", "brand"], ManufacturerSource] | None:
+    """Select one consistent page identity without using source metadata."""
+    if not identities:
+        return None
+    distinct = {
+        (normalize_reference_value(value), kind)
+        for _source, value, kind in identities
+    }
+    if len(distinct) != 1:
+        return None
+    source, value, kind = identities[0]
+    conflict = _catalogue_identity_conflict(row, value)
+    if conflict is not None:
+        return None
+    return value, kind, source
 
 
 def _map_resolved_identity(
