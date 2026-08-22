@@ -242,6 +242,12 @@ def _render_delivery_page() -> None:
             mime="text/csv",
             type="primary",
         )
+        st.download_button(
+            "Download candidate telemetry CSV",
+            data=candidate_telemetry_csv_bytes(batch),
+            file_name="candidate_telemetry.csv",
+            mime="text/csv",
+        )
     else:
         st.info("No delivery rows are available yet.")
 
@@ -418,6 +424,48 @@ def delivery_csv_bytes(batch: BatchResult) -> bytes:
     writer = csv.DictWriter(output, fieldnames=list(batch.delivery_rows[0].keys()))
     writer.writeheader()
     writer.writerows(batch.delivery_rows)
+    return output.getvalue().encode("utf-8")
+
+
+def build_candidate_telemetry_rows(batch: BatchResult) -> list[dict[str, Any]]:
+    """Flatten bounded candidate diagnostics without including source content."""
+    rows: list[dict[str, Any]] = []
+    for item in batch.candidate_telemetry:
+        telemetry = item.telemetry
+        ranking = telemetry.ranking
+        rows.append({
+            "MPN": item.mfg_part_num,
+            "candidate_url": telemetry.url,
+            "domain": telemetry.domain,
+            "ranking": ranking.decision if ranking is not None else "",
+            "decision": ranking.decision if ranking is not None else "",
+            "score": ranking.score if ranking is not None else "",
+            "fetched": telemetry.fetched,
+            "http_status": telemetry.http_status if telemetry.http_status is not None else "",
+            "content_type": telemetry.content_type or "",
+            "exact_mpn": (
+                telemetry.exact_mpn_verified
+                if telemetry.exact_mpn_verified is not None else ""
+            ),
+            "identity_value": telemetry.identity_value or "",
+            "identity_kind": telemetry.identity_kind or "",
+            "identity_result": telemetry.identity_result or "",
+            "rejection_code": telemetry.rejection_code or "",
+        })
+    return rows
+
+
+def candidate_telemetry_csv_bytes(batch: BatchResult) -> bytes:
+    """Serialize candidate diagnostics separately from result/review CSVs."""
+    fieldnames = [
+        "MPN", "candidate_url", "domain", "ranking", "decision", "score",
+        "fetched", "http_status", "content_type", "exact_mpn",
+        "identity_value", "identity_kind", "identity_result", "rejection_code",
+    ]
+    output = io.StringIO(newline="")
+    writer = csv.DictWriter(output, fieldnames=fieldnames)
+    writer.writeheader()
+    writer.writerows(build_candidate_telemetry_rows(batch))
     return output.getvalue().encode("utf-8")
 
 

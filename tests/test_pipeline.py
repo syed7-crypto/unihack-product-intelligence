@@ -244,6 +244,34 @@ class PipelineTests(unittest.TestCase):
             with self.assertRaisesRegex(ProductIntelligencePipelineError, "Source extraction failed"):
                 run_pipeline([unsupported])
 
+    def test_product_identification_schema_failure_preserves_safe_category_and_chain(self) -> None:
+        source = extract_file(SAMPLES / "industrial_valve.txt")
+        with self.assertRaises(ProductIntelligencePipelineError) as context:
+            run_pipeline([source], SequentialGeminiClient([{"product_type": "Valve"}]))
+
+        error = context.exception
+        self.assertEqual(error.code, "PRODUCT_IDENTIFICATION_FAILED")
+        self.assertIn("schema_validation", str(error))
+        self.assertIsInstance(error.__cause__, Exception)
+        self.assertIn("schema", str(error.__cause__).casefold())
+
+    def test_product_identification_runtime_failure_preserves_category_without_secret_text(self) -> None:
+        source = extract_file(SAMPLES / "industrial_valve.txt")
+
+        class FailingClient:
+            def generate_structured_json(self, prompt: str, response_schema: type) -> str:
+                raise RuntimeError("HTTP 503 secret-api-key=do-not-expose")
+
+        with self.assertRaises(ProductIntelligencePipelineError) as context:
+            run_pipeline([source], FailingClient())
+
+        error = context.exception
+        self.assertEqual(error.code, "PRODUCT_IDENTIFICATION_FAILED")
+        self.assertIn("response_invalid_or_runtime", str(error))
+        self.assertNotIn("secret-api-key", str(error))
+        self.assertIsNotNone(error.__cause__)
+        self.assertIsNotNone(error.__cause__.__cause__)
+
 
 if __name__ == "__main__":
     unittest.main()

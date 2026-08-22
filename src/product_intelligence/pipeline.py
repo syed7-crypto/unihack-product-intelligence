@@ -80,7 +80,9 @@ def run_pipeline(
         product_identification = identify_product(sources[0], gemini_client)
     except ProductIdentificationError as error:
         raise ProductIntelligencePipelineError(
-            "Product identification failed."
+            "Product identification failed: "
+            f"{_product_identification_failure_category(error)}.",
+            "PRODUCT_IDENTIFICATION_FAILED",
         ) from error
     except Exception as error:
         raise ProductIntelligencePipelineError(
@@ -127,6 +129,18 @@ def run_pipeline(
         confidence=confidence,
         diagnostics=diagnostics,
     )
+
+
+def _product_identification_failure_category(error: ProductIdentificationError) -> str:
+    """Return a bounded category without exposing response or exception text."""
+    message = str(error).casefold()
+    if "schema" in message and "validation" in message:
+        return "schema_validation"
+    if "valid product identification response" in message:
+        return "response_invalid_or_runtime"
+    if "request failed" in message:
+        return "gemini_request_failure"
+    return "product_identification_failure"
 
 
 def _extract_sources(source_files: Sequence[str | Path | NormalizedSource]) -> list[NormalizedSource]:

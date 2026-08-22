@@ -35,6 +35,7 @@ from .source_discovery import (
 )
 from .pilot_policies import resolve_source_policy_for_row
 from .runtime_policy import (
+    CandidateTelemetry,
     IdentityResolutionResult,
     RuntimeDomainCandidateProvider,
     RuntimeAuthorityVerifier,
@@ -65,6 +66,13 @@ class BatchEvaluationDiagnostic(BaseModel):
     comparison: Any
 
 
+class BatchCandidateTelemetry(BaseModel):
+    """One candidate diagnostic retained with its catalogue-row identity."""
+
+    mfg_part_num: str
+    telemetry: CandidateTelemetry
+
+
 class BatchResult(BaseModel):
     """Ordered outcomes and deterministic summary for one catalogue batch."""
 
@@ -78,6 +86,7 @@ class BatchResult(BaseModel):
     review_issues: list[BatchReviewIssue] = Field(default_factory=list)
     evaluation_diagnostics: list[BatchEvaluationDiagnostic] = Field(default_factory=list)
     row_results: list[CatalogueEnrichmentResult] = Field(default_factory=list)
+    candidate_telemetry: list[BatchCandidateTelemetry] = Field(default_factory=list)
 
 
 def run_catalogue_batch(
@@ -120,8 +129,10 @@ def run_catalogue_batch(
     delivery_rows: list[dict[str, str]] = []
     review_issues: list[BatchReviewIssue] = []
     evaluation_diagnostics: list[BatchEvaluationDiagnostic] = []
+    candidate_telemetry: list[BatchCandidateTelemetry] = []
 
     for row_index, row in enumerate(rows):
+        row_candidate_telemetry: list[CandidateTelemetry] = []
         try:
             urls = _resolve_source_urls(source_urls, row)
             expected = _resolve_expected_row(expected_delivery_rows, row)
@@ -141,6 +152,10 @@ def run_catalogue_batch(
                     runtime_max_candidate_domains=runtime_max_candidate_domains,
                     runtime_max_domain_searches=runtime_max_domain_searches,
                 )
+                if discovery.runtime_identity is not None:
+                    row_candidate_telemetry = list(
+                        discovery.runtime_identity.candidate_telemetry
+                    )
                 result = enrich(
                     row,
                     [],
@@ -176,6 +191,14 @@ def run_catalogue_batch(
         except (CatalogueEnrichmentError, RuntimeError, ValueError, OSError) as error:
             result = _failed_result(row, delivery_schema, error)
 
+        result.candidate_telemetry = row_candidate_telemetry
+        candidate_telemetry.extend(
+            BatchCandidateTelemetry(
+                mfg_part_num=row.Mfg_Part_Num,
+                telemetry=telemetry,
+            )
+            for telemetry in row_candidate_telemetry
+        )
         row_results.append(result)
         delivery_rows.append(_safe_delivery_row(result, delivery_schema))
         review_issues.extend(
@@ -205,6 +228,7 @@ def run_catalogue_batch(
         review_issues=review_issues,
         evaluation_diagnostics=evaluation_diagnostics,
         row_results=row_results,
+        candidate_telemetry=candidate_telemetry,
     )
 
 

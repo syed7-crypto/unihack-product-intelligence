@@ -44,7 +44,11 @@ from .reference_data import (
     normalize_reference_value,
 )
 from .review import ReviewReport, build_review_report
-from .runtime_policy import IdentityResolutionResult, _catalogue_identity_conflict
+from .runtime_policy import (
+    CandidateTelemetry,
+    IdentityResolutionResult,
+    _catalogue_identity_conflict,
+)
 
 
 AttributeDeliveryMapping = ControlledAttributeMapping
@@ -103,6 +107,7 @@ class CatalogueEnrichmentResult(BaseModel):
     reference_resolution: CatalogReferenceResolution | None = None
     mapping_diagnostics: list[MappingDiagnostic] = Field(default_factory=list)
     evaluation_comparison: EvaluationComparison | None = None
+    candidate_telemetry: list[CandidateTelemetry] = Field(default_factory=list)
     review: ReviewReport = Field(default_factory=ReviewReport)
 
 

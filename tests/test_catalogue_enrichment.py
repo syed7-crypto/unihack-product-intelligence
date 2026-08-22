@@ -1,6 +1,7 @@
 import json
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from src.product_intelligence.catalog_input import CatalogInputRow, load_catalog_rows, select_catalog_row
 from src.product_intelligence.catalogue_enrichment import (
@@ -19,6 +20,7 @@ from src.product_intelligence.manufacturer_enrichment import (
     ManufacturerSource,
     RetrievalResult,
 )
+from src.product_intelligence.pipeline import ProductIntelligencePipelineError
 from src.product_intelligence.reference_data import (
     AttributeReference,
     AttributeRule,
@@ -376,6 +378,52 @@ class CatalogueEnrichmentTests(unittest.TestCase):
         self.assertEqual(len(result.source_diagnostics), 2)
         self.assertTrue(all(not diagnostic.success for diagnostic in result.source_diagnostics))
         self.assertEqual(result.delivery_row["Mfg_Part_Num"], FIXTURE_PART)
+
+    def test_verified_source_pipeline_failure_is_not_ready_and_preserves_diagnostics(self) -> None:
+        sources = self.make_sources()
+        provider = FixtureProvider(sources)
+        error = ProductIntelligencePipelineError(
+            "Attribute value extraction failed.",
+            "ATTRIBUTE_EXTRACTION_FAILED",
+        )
+
+        with patch("src.product_intelligence.catalogue_enrichment.run_pipeline", side_effect=error):
+            result = enrich_catalogue_row(
+                self.row,
+                [WEB_URL],
+                self.schema,
+                provider=provider,
+                attribute_mappings=self.mappings(),
+            )
+
+        self.assertIsNone(result.pipeline_result)
+        self.assertEqual(result.mapping_diagnostics, [])
+        self.assertEqual(result.review.status, "blocked")
+        self.assertIn("ATTRIBUTE_EXTRACTION_FAILED", {issue.code for issue in result.review.issues})
+        self.assertTrue(any(d.success and d.url == WEB_URL for d in result.source_diagnostics))
+        self.assertTrue(any(not d.success and d.code == "ATTRIBUTE_EXTRACTION_FAILED" for d in result.source_diagnostics))
+
+    def test_verified_source_unexpected_pipeline_failure_is_not_ready(self) -> None:
+        sources = self.make_sources()
+        provider = FixtureProvider(sources)
+
+        with patch(
+            "src.product_intelligence.catalogue_enrichment.run_pipeline",
+            side_effect=RuntimeError("unexpected extraction runtime failure"),
+        ):
+            result = enrich_catalogue_row(
+                self.row,
+                [WEB_URL],
+                self.schema,
+                provider=provider,
+                attribute_mappings=self.mappings(),
+            )
+
+        self.assertIsNone(result.pipeline_result)
+        self.assertEqual(result.mapping_diagnostics, [])
+        self.assertEqual(result.review.status, "blocked")
+        self.assertIn("PIPELINE_FAILED", {issue.code for issue in result.review.issues})
+        self.assertTrue(any(d.success and d.url == WEB_URL for d in result.source_diagnostics))
 
 
 if __name__ == "__main__":

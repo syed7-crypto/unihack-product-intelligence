@@ -82,10 +82,14 @@ def build_review_report(
     for diagnostic in failed_sources:
         error = str(getattr(diagnostic, "error", None) or "Source retrieval failed.")
         explicit_code = getattr(diagnostic, "code", None)
+        pipeline_failure = False
         if explicit_code:
+            pipeline_failure = _is_pipeline_failure_code(explicit_code)
             code = explicit_code
             severity = (
-                "warning"
+                "blocking"
+                if pipeline_failure
+                else "warning"
                 if explicit_code in {
                     "NO_TRUSTWORTHY_SOURCE",
                     "IDENTITY_UNRESOLVED",
@@ -109,7 +113,8 @@ def build_review_report(
                 current_value=error,
                 affects_delivery=(
                     True
-                    if explicit_code in {
+                    if pipeline_failure
+                    or explicit_code in {
                         "CANDIDATE_PLAUSIBLE",
                         "MANUFACTURER_IDENTITY_CONFLICT",
                     }
@@ -312,6 +317,16 @@ def build_review_report(
             )
 
     return ReviewReport(status=_report_status(issues), issues=issues)
+
+
+def _is_pipeline_failure_code(code: str) -> bool:
+    """Identify failures raised after a source was already verified."""
+    return code in {
+        "PIPELINE_FAILED",
+        "PRODUCT_IDENTIFICATION_FAILED",
+        "ATTRIBUTE_EXTRACTION_FAILED",
+        "CROSS_SOURCE_VALIDATION_FAILED",
+    }
 
 
 def _source_error_details(error: str, has_successful_source: bool) -> tuple[str, ReviewSeverity, ReviewScope]:
