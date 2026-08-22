@@ -2,6 +2,7 @@ import unittest
 
 from src.product_intelligence.gemini_client import (
     GeminiClient,
+    GeminiProviderError,
     GeminiTransientError,
     _is_transient_503,
 )
@@ -63,16 +64,39 @@ class GeminiRetryTests(unittest.TestCase):
         self.assertEqual(sleeps, [1.0, 4.0, 8.0])
         self.assertEqual(client._client.models.calls, 4)
         self.assertIn("transient failure", str(context.exception))
+        self.assertEqual(context.exception.provider_category, "HTTP_503")
+        self.assertNotIn("503 UNAVAILABLE", str(context.exception))
 
     def test_non_503_errors_are_not_retried(self):
         sleeps = []
         client = client_for([RuntimeError("401 UNAUTHENTICATED")], sleeps)
 
-        with self.assertRaisesRegex(RuntimeError, "401"):
+        with self.assertRaises(GeminiProviderError) as context:
             client.generate_text("hello")
 
         self.assertEqual(sleeps, [])
         self.assertEqual(client._client.models.calls, 1)
+        self.assertEqual(context.exception.provider_category, "API_ERROR")
+        self.assertNotIn("401", str(context.exception))
+
+    def test_provider_failure_categories_are_bounded_and_safe(self):
+        class StatusError(Exception):
+            def __init__(self, status_code):
+                self.status_code = status_code
+
+        cases = [
+            (StatusError(429), "HTTP_429"),
+            (TimeoutError("secret timeout details"), "TIMEOUT"),
+            (ConnectionError("secret connection details"), "CONNECTION_ERROR"),
+            (RuntimeError("secret provider response"), "API_ERROR"),
+        ]
+        for failure, expected_category in cases:
+            with self.subTest(expected_category=expected_category):
+                client = client_for([failure], [])
+                with self.assertRaises(GeminiProviderError) as context:
+                    client.generate_structured_json("hello", dict)  # type: ignore[arg-type]
+                self.assertEqual(context.exception.provider_category, expected_category)
+                self.assertNotIn("secret", str(context.exception))
 
     def test_structured_requests_use_the_same_retry_behavior(self):
         sleeps = []
