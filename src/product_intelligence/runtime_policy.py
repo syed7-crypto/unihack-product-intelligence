@@ -1274,7 +1274,10 @@ def _conflicting_unlabeled_identity(
     expected catalogue identity, but they are not allowed to manufacture a
     competing identity from ordinary words such as ``This`` or ``Smart``.
     """
-    candidates = [*signals.get("site_name", ()), *signals.get("structured_metadata", ())]
+    # ``og:site_name`` identifies the publisher/seller context, not the
+    # product manufacturer. It remains available to the positive signal
+    # combiner, but cannot manufacture a competing identity assertion.
+    candidates = [*signals.get("structured_metadata", ())]
     for candidate in candidates:
         if not _identity_matches(expected_identity, candidate):
             return candidate

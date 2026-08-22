@@ -470,6 +470,28 @@ class RuntimePolicyTests(unittest.TestCase):
         self.assertEqual(result.failure_code, "MANUFACTURER_IDENTITY_CONFLICT")
         self.assertTrue(any("Catalogue identity conflicts" in item for item in result.diagnostics))
 
+    def test_site_name_does_not_create_seller_as_manufacturer_conflict(self) -> None:
+        url = "https://ubuy.mq/product/RUNTIME-1"
+        body = (
+            b"<title>Festool RUNTIME-1 Product | Ubuy</title>"
+            b'<meta property="og:site_name" content="Ubuy Martinique">'
+            b'<meta property="og:title" content="Festool RUNTIME-1 Product | Ubuy">'
+            b"<h1>Festool RUNTIME-1 Product</h1>"
+            b"<p>Festool RUNTIME-1</p>"
+        )
+        candidate = row("RUNTIME-1", manufacturer="Festool USA (FESTO)")
+        result = resolve_identity_and_source_policy(
+            candidate,
+            search_provider=InMemorySourceSearchProvider({
+                'site:ubuy.mq "RUNTIME-1"': [SearchResult(url=url)]
+            }),
+            enrichment_provider=self.provider([], body),
+            candidate_domain_provider=lambda _row: [RuntimeDomainCandidate(domain="ubuy.mq")],
+        )
+
+        self.assertNotEqual(result.failure_code, "MANUFACTURER_IDENTITY_CONFLICT")
+        self.assertFalse(any("Ubuy Martinique" in item for item in result.diagnostics))
+
     def test_arbitrary_body_word_smart_cannot_become_identity(self) -> None:
         url = "https://philips.example/product/RUNTIME-1"
         body = (
