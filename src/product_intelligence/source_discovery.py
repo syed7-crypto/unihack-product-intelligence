@@ -25,6 +25,7 @@ from .catalog_input import CatalogInputRow
 from .candidate_ranking import CandidateRanking, rank_candidate
 from .manufacturer_enrichment import ManufacturerEnrichmentProvider, ManufacturerSource
 from .reference_data import ReferenceResolutionResult, normalize_reference_value
+from .search_parallel import search_in_order
 
 
 SourceKind = Literal["webpage", "pdf", "unknown"]
@@ -540,10 +541,13 @@ def discover_manufacturer_sources(
     brand_reference: ReferenceResolutionResult | None = None,
     verified_source_history=None,
     max_results_per_query: int = 10,
+    search_concurrency: int = 1,
 ) -> SourceDiscoveryResult:
     """Search for candidates and apply policy metadata without verification."""
     if max_results_per_query < 1:
         raise ValueError("max_results_per_query must be positive.")
+    if search_concurrency < 1:
+        raise ValueError("search concurrency must be positive.")
 
     queries = generate_discovery_queries(
         catalogue_row,
@@ -577,13 +581,18 @@ def discover_manufacturer_sources(
                 )
             )
 
-    for query in queries:
-        try:
-            results = search_provider.search(query, max_results_per_query)
-        except Exception as error:
+    search_results = search_in_order(
+        search_provider,
+        queries,
+        max_results_per_query,
+        concurrency=search_concurrency,
+    )
+    for query, outcome in zip(queries, search_results):
+        if outcome.error is not None:
+            error = outcome.error
             errors.append(f"Search failed for query '{query}': {error}")
             continue
-        for rank, result in enumerate(results, start=1):
+        for rank, result in enumerate(outcome.results, start=1):
             if result.url in seen_urls:
                 continue
             seen_urls.add(result.url)
@@ -625,6 +634,7 @@ def discover_and_verify_sources(
     verified_source_history=None,
     max_results_per_query: int = 10,
     max_verification_candidates: int = DEFAULT_MAX_VERIFICATION_CANDIDATES,
+    search_concurrency: int = 1,
 ) -> DiscoveredSourceVerificationResult:
     """Discover candidates, then verify only policy-approved URLs.
 
@@ -642,6 +652,7 @@ def discover_and_verify_sources(
         brand_reference=brand_reference,
         verified_source_history=verified_source_history,
         max_results_per_query=max_results_per_query,
+        search_concurrency=search_concurrency,
     )
     verified_sources: list[ManufacturerSource] = []
     diagnostics: list[SourceVerificationDiagnostic] = []

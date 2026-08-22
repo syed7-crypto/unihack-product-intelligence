@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from pydantic import BaseModel, Field
@@ -28,6 +29,7 @@ from .product_identification import (
     ProductIdentificationResult,
     identify_product,
 )
+from .runtime_timing import RuntimeTimingAccumulator
 
 
 class SourceSummary(BaseModel):
@@ -63,6 +65,9 @@ class ProductIntelligencePipelineError(RuntimeError):
 def run_pipeline(
     source_files: Sequence[str | Path | NormalizedSource],
     client: StructuredGeminiClient | None = None,
+    *,
+    runtime_timing: RuntimeTimingAccumulator | None = None,
+    attribute_extraction_concurrency: int = 1,
 ) -> ProductIntelligenceResult:
     """Run extraction, AI stages, validation, and scoring for source files.
 
@@ -72,12 +77,21 @@ def run_pipeline(
     """
     if not source_files:
         raise ProductIntelligencePipelineError("At least one source file is required.")
+    if attribute_extraction_concurrency < 1:
+        raise ValueError("attribute extraction concurrency must be positive.")
 
     sources = _extract_sources(source_files)
     gemini_client = client
     try:
         gemini_client = gemini_client or create_gemini_client()
-        product_identification = identify_product(sources[0], gemini_client)
+        if runtime_timing is None:
+            product_identification = identify_product(sources[0], gemini_client)
+        else:
+            with runtime_timing.measure(
+                "product_identification_duration_seconds",
+                "product_identification_calls",
+            ):
+                product_identification = identify_product(sources[0], gemini_client)
     except ProductIdentificationError as error:
         category = _product_identification_failure_category(error)
         provider_suffix = (
@@ -100,15 +114,19 @@ def run_pipeline(
             "Could not initialize the product intelligence pipeline."
         ) from error
 
+    extraction_outcomes = _extract_attributes_in_order(
+        sources,
+        product_identification,
+        gemini_client,
+        runtime_timing=runtime_timing,
+        concurrency=attribute_extraction_concurrency,
+    )
     extracted_attributes: list[AttributeExtractionResult] = []
     diagnostics: list[Diagnostic] = []
     first_extraction_error: AttributeExtractionError | None = None
-    for source in sources:
-        try:
-            extracted_attributes.append(
-                extract_attribute_values(source, product_identification, gemini_client)
-            )
-        except AttributeExtractionError as error:
+    for source, outcome in zip(sources, extraction_outcomes):
+        if isinstance(outcome, AttributeExtractionError):
+            error = outcome
             if first_extraction_error is None:
                 first_extraction_error = error
             diagnostics.append(
@@ -124,7 +142,11 @@ def run_pipeline(
                     source_id=source.source_id,
                     source_name=source.source_name,
                 )
-        )
+            )
+            continue
+        if isinstance(outcome, Exception):
+            raise outcome
+        extracted_attributes.append(outcome)
     if not extracted_attributes:
         if first_extraction_error is not None:
             raise ProductIntelligencePipelineError(
@@ -140,7 +162,17 @@ def run_pipeline(
         )
 
     try:
-        validation = validate_cross_source(extracted_attributes, product_identification)
+        if runtime_timing is None:
+            validation = validate_cross_source(
+                extracted_attributes, product_identification
+            )
+        else:
+            with runtime_timing.measure(
+                "validation_delivery_mapping_duration_seconds"
+            ):
+                validation = validate_cross_source(
+                    extracted_attributes, product_identification
+                )
     except CrossSourceValidationError as error:
         raise ProductIntelligencePipelineError(
             "Cross-source validation failed."
@@ -156,6 +188,64 @@ def run_pipeline(
         confidence=confidence,
         diagnostics=diagnostics,
     )
+
+
+def _extract_attributes_in_order(
+    sources: Sequence[NormalizedSource],
+    product_identification: ProductIdentificationResult,
+    gemini_client: StructuredGeminiClient,
+    *,
+    runtime_timing: RuntimeTimingAccumulator | None,
+    concurrency: int,
+) -> list[AttributeExtractionResult | Exception]:
+    """Run independent source requests while returning outcomes by source index."""
+    if concurrency == 1 or len(sources) <= 1:
+        return [
+            _extract_one_source(
+                source,
+                product_identification,
+                gemini_client,
+                runtime_timing=runtime_timing,
+            )
+            for source in sources
+        ]
+
+    with ThreadPoolExecutor(
+        max_workers=min(concurrency, len(sources)),
+        thread_name_prefix="unihack-gemini-extraction",
+    ) as executor:
+        futures = [
+            executor.submit(
+                _extract_one_source,
+                source,
+                product_identification,
+                gemini_client,
+                runtime_timing=runtime_timing,
+            )
+            for source in sources
+        ]
+        # Reading futures in submission order preserves the old source order;
+        # the executor still waits for every independent request to finish.
+        return [future.result() for future in futures]
+
+
+def _extract_one_source(
+    source: NormalizedSource,
+    product_identification: ProductIdentificationResult,
+    gemini_client: StructuredGeminiClient,
+    *,
+    runtime_timing: RuntimeTimingAccumulator | None,
+) -> AttributeExtractionResult | Exception:
+    try:
+        if runtime_timing is None:
+            return extract_attribute_values(source, product_identification, gemini_client)
+        with runtime_timing.measure(
+            "attribute_extraction_duration_seconds",
+            "attribute_extraction_calls",
+        ):
+            return extract_attribute_values(source, product_identification, gemini_client)
+    except Exception as error:
+        return error
 
 
 def _product_identification_failure_category(error: ProductIdentificationError) -> str:
