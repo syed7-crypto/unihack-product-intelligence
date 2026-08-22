@@ -390,12 +390,19 @@ def enrich_catalogue_row(
     try:
         pipeline_result = run_pipeline(normalized_sources, client=client)
     except ProductIntelligencePipelineError as error:
+        inner_diagnostics = "; ".join(
+            f"{diagnostic.code}: {diagnostic.message}"
+            for diagnostic in error.diagnostics
+        )
+        diagnostic_message = f"Pipeline failed after source verification: {error}"
+        if inner_diagnostics:
+            diagnostic_message += f" Inner diagnostic: {inner_diagnostics}"
         diagnostics.append(
             EnrichmentSourceDiagnostic(
                 url=";".join(source_urls),
                 success=False,
                 code=error.code,
-                error=f"Pipeline failed after source verification: {error}",
+                error=diagnostic_message,
             )
         )
         return _finish_result(

@@ -20,6 +20,7 @@ from src.product_intelligence.manufacturer_enrichment import (
     ManufacturerSource,
     RetrievalResult,
 )
+from src.product_intelligence.diagnostics import Diagnostic
 from src.product_intelligence.pipeline import ProductIntelligencePipelineError
 from src.product_intelligence.reference_data import (
     AttributeReference,
@@ -402,6 +403,34 @@ class CatalogueEnrichmentTests(unittest.TestCase):
         self.assertIn("ATTRIBUTE_EXTRACTION_FAILED", {issue.code for issue in result.review.issues})
         self.assertTrue(any(d.success and d.url == WEB_URL for d in result.source_diagnostics))
         self.assertTrue(any(not d.success and d.code == "ATTRIBUTE_EXTRACTION_FAILED" for d in result.source_diagnostics))
+
+    def test_product_identification_diagnostic_is_copied_to_source_diagnostic(self) -> None:
+        sources = self.make_sources()
+        provider = FixtureProvider(sources)
+        error = ProductIntelligencePipelineError(
+            "Product identification failed: gemini_request_failure.",
+            "PRODUCT_IDENTIFICATION_FAILED",
+            diagnostics=[
+                Diagnostic(
+                    code="GEMINI_REQUEST_FAILURE",
+                    message="Gemini product identification request failed.",
+                )
+            ],
+        )
+
+        with patch("src.product_intelligence.catalogue_enrichment.run_pipeline", side_effect=error):
+            result = enrich_catalogue_row(
+                self.row,
+                [WEB_URL],
+                self.schema,
+                provider=provider,
+                attribute_mappings=self.mappings(),
+            )
+
+        failed = [d for d in result.source_diagnostics if not d.success]
+        self.assertEqual(failed[-1].code, "PRODUCT_IDENTIFICATION_FAILED")
+        self.assertIn("GEMINI_REQUEST_FAILURE", failed[-1].error or "")
+        self.assertIn("Gemini product identification request failed.", failed[-1].error or "")
 
     def test_verified_source_unexpected_pipeline_failure_is_not_ready(self) -> None:
         sources = self.make_sources()

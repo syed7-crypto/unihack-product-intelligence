@@ -252,6 +252,12 @@ class PipelineTests(unittest.TestCase):
         error = context.exception
         self.assertEqual(error.code, "PRODUCT_IDENTIFICATION_FAILED")
         self.assertIn("schema_validation", str(error))
+        self.assertEqual(len(error.diagnostics), 1)
+        self.assertEqual(error.diagnostics[0].code, "SCHEMA_VALIDATION")
+        self.assertEqual(
+            error.diagnostics[0].message,
+            "Gemini returned a product schema that failed validation.",
+        )
         self.assertIsInstance(error.__cause__, Exception)
         self.assertIn("schema", str(error.__cause__).casefold())
 
@@ -268,7 +274,14 @@ class PipelineTests(unittest.TestCase):
         error = context.exception
         self.assertEqual(error.code, "PRODUCT_IDENTIFICATION_FAILED")
         self.assertIn("response_invalid_or_runtime", str(error))
+        self.assertEqual(len(error.diagnostics), 1)
+        self.assertEqual(error.diagnostics[0].code, "RESPONSE_INVALID_OR_RUNTIME")
+        self.assertEqual(
+            error.diagnostics[0].message,
+            "Gemini did not return a valid product identification response.",
+        )
         self.assertNotIn("secret-api-key", str(error))
+        self.assertNotIn("secret-api-key", error.diagnostics[0].message)
         self.assertIsNotNone(error.__cause__)
         self.assertIsNotNone(error.__cause__.__cause__)
 
