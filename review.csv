@@ -1,0 +1,16 @@
+MPN,Status,Severity,Code,Reason
+3MABR-7100075678,needs_review,warning,NO_TRUSTWORTHY_SOURCE,Identity/source policy resolution UNKNOWN: No candidate satisfied authority and exact-MPN verification. Candidate retailer domain rejected: www.grainger.com.
+3MABR-7100075678,needs_review,warning,MANUFACTURER_UNRESOLVED,No manufacturer reference was configured.
+3MABR-7100045865,needs_review,warning,NO_TRUSTWORTHY_SOURCE,Identity/source policy resolution UNKNOWN: No candidate satisfied authority and exact-MPN verification. Candidate retailer domain rejected: www.grainger.com.
+3MABR-7100045865,needs_review,warning,MANUFACTURER_UNRESOLVED,No manufacturer reference was configured.
+3MABR-7100048736,needs_review,warning,NO_TRUSTWORTHY_SOURCE,Identity/source policy resolution UNKNOWN: No candidate satisfied authority and exact-MPN verification. Candidate retailer domain rejected: www.grainger.com.
+3MABR-7100048736,needs_review,warning,MANUFACTURER_UNRESOLVED,No manufacturer reference was configured.
+3MABR-7100075690,needs_review,warning,NO_TRUSTWORTHY_SOURCE,Identity/source policy resolution UNKNOWN: No candidate satisfied authority and exact-MPN verification. Candidate retailer domain rejected: www.grainger.com.
+3MABR-7100075690,needs_review,warning,MANUFACTURER_UNRESOLVED,No manufacturer reference was configured.
+3MABR-7100075692,needs_review,warning,NO_TRUSTWORTHY_SOURCE,Identity/source policy resolution UNKNOWN: No candidate satisfied authority and exact-MPN verification. Candidate retailer domain rejected: www.grainger.com.
+3MABR-7100075692,needs_review,warning,MANUFACTURER_UNRESOLVED,No manufacturer reference was configured.
+3MABR-7100145365,needs_review,warning,NO_TRUSTWORTHY_SOURCE,Identity/source policy resolution UNKNOWN: No candidate satisfied authority and exact-MPN verification.
+3MABR-7100145365,needs_review,warning,MANUFACTURER_UNRESOLVED,No manufacturer reference was configured.
+5B-332-080,needs_review,warning,MANUFACTURER_IDENTITY_CONFLICT,"Identity/source policy resolution UNKNOWN: No candidate satisfied authority and exact-MPN verification. Catalogue identity conflicts with discovered source identity: catalogue=['Mirka Abrasives', 'Mirka Abrasives Inc'], discovered='Wespac Industrial'. | Candidate site did not provide matching manufacturer identity evidence. | Candidate site did not provide matching manufacturer identity evidence. | Candidate retrieval attempt limit (3) reached; remaining URLs were not fetched."
+5B-332-080,needs_review,warning,MANUFACTURER_UNRESOLVED,No manufacturer reference was configured.
+9A-570-240,blocked,blocking,PRODUCT_IDENTIFICATION_FAILED,Pipeline failed after source verification: Product identification failed: gemini_request_failure.

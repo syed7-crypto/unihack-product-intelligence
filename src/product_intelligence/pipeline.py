@@ -91,12 +91,15 @@ def run_pipeline(
 
     extracted_attributes: list[AttributeExtractionResult] = []
     diagnostics: list[Diagnostic] = []
+    first_extraction_error: AttributeExtractionError | None = None
     for source in sources:
         try:
             extracted_attributes.append(
                 extract_attribute_values(source, product_identification, gemini_client)
             )
         except AttributeExtractionError as error:
+            if first_extraction_error is None:
+                first_extraction_error = error
             diagnostics.append(
                 Diagnostic(
                     code=error.code,
@@ -104,8 +107,15 @@ def run_pipeline(
                     source_id=source.source_id,
                     source_name=source.source_name,
                 )
-            )
+        )
     if not extracted_attributes:
+        if first_extraction_error is not None:
+            raise ProductIntelligencePipelineError(
+                "Attribute value extraction failed: "
+                f"{first_extraction_error.code}. {first_extraction_error.message}",
+                "ATTRIBUTE_EXTRACTION_FAILED",
+                diagnostics,
+            ) from first_extraction_error
         raise ProductIntelligencePipelineError(
             "Attribute value extraction failed.",
             "ATTRIBUTE_EXTRACTION_FAILED",
