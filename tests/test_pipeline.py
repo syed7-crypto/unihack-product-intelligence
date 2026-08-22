@@ -11,6 +11,7 @@ from src.product_intelligence.pipeline import (
     run_pipeline,
 )
 from src.product_intelligence.extraction import extract_file
+from src.product_intelligence.gemini_client import GeminiProviderError
 
 
 PROJECT_ROOT = Path(__file__).parents[1]
@@ -252,6 +253,12 @@ class PipelineTests(unittest.TestCase):
         error = context.exception
         self.assertEqual(error.code, "PRODUCT_IDENTIFICATION_FAILED")
         self.assertIn("schema_validation", str(error))
+        self.assertEqual(len(error.diagnostics), 1)
+        self.assertEqual(error.diagnostics[0].code, "SCHEMA_VALIDATION")
+        self.assertEqual(
+            error.diagnostics[0].message,
+            "Gemini returned a product schema that failed validation.",
+        )
         self.assertIsInstance(error.__cause__, Exception)
         self.assertIn("schema", str(error.__cause__).casefold())
 
@@ -268,9 +275,34 @@ class PipelineTests(unittest.TestCase):
         error = context.exception
         self.assertEqual(error.code, "PRODUCT_IDENTIFICATION_FAILED")
         self.assertIn("response_invalid_or_runtime", str(error))
+        self.assertEqual(len(error.diagnostics), 1)
+        self.assertEqual(error.diagnostics[0].code, "RESPONSE_INVALID_OR_RUNTIME")
+        self.assertEqual(
+            error.diagnostics[0].message,
+            "Gemini did not return a valid product identification response.",
+        )
         self.assertNotIn("secret-api-key", str(error))
+        self.assertNotIn("secret-api-key", error.diagnostics[0].message)
         self.assertIsNotNone(error.__cause__)
         self.assertIsNotNone(error.__cause__.__cause__)
+
+    def test_product_identification_provider_category_reaches_safe_diagnostic(self) -> None:
+        source = extract_file(SAMPLES / "industrial_valve.txt")
+
+        class RateLimitedClient:
+            def generate_structured_json(self, prompt: str, response_schema: type) -> str:
+                raise GeminiProviderError("HTTP_429")
+
+        with self.assertRaises(ProductIntelligencePipelineError) as context:
+            run_pipeline([source], RateLimitedClient())
+
+        error = context.exception
+        self.assertEqual(error.code, "PRODUCT_IDENTIFICATION_FAILED")
+        self.assertEqual(len(error.diagnostics), 1)
+        self.assertIn("Provider category: HTTP_429", error.diagnostics[0].message)
+        self.assertNotIn("API key", error.diagnostics[0].message)
+        self.assertIsInstance(error.__cause__, Exception)
+        self.assertEqual(error.__cause__.provider_category, "HTTP_429")
 
     def test_attribute_response_validation_failure_preserves_category_and_chain(self) -> None:
         source = extract_file(SAMPLES / "industrial_valve.txt")
@@ -327,6 +359,28 @@ class PipelineTests(unittest.TestCase):
         self.assertNotIn("secret-api-key", str(error))
         self.assertEqual(error.__cause__.code, "ATTRIBUTE_EXTRACTION_REQUEST_FAILED")
         self.assertIsNotNone(error.__cause__.__cause__)
+
+    def test_attribute_provider_category_reaches_safe_diagnostic(self) -> None:
+        source = extract_file(SAMPLES / "industrial_valve.txt")
+
+        class TimeoutClient:
+            def __init__(self) -> None:
+                self.calls = 0
+
+            def generate_structured_json(self, prompt: str, response_schema: type) -> str:
+                self.calls += 1
+                if self.calls == 1:
+                    return json.dumps(IDENTIFICATION_RESPONSE)
+                raise GeminiProviderError("TIMEOUT")
+
+        with self.assertRaises(ProductIntelligencePipelineError) as context:
+            run_pipeline([source], TimeoutClient())
+
+        error = context.exception
+        self.assertEqual(error.code, "ATTRIBUTE_EXTRACTION_FAILED")
+        self.assertEqual(error.diagnostics[0].code, "ATTRIBUTE_EXTRACTION_REQUEST_FAILED")
+        self.assertIn("Provider category: TIMEOUT", error.diagnostics[0].message)
+        self.assertNotIn("TIMEOUT details", error.diagnostics[0].message)
 
 
 if __name__ == "__main__":

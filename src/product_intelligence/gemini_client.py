@@ -24,7 +24,16 @@ class GeminiTransientError(RuntimeError):
 
     def __init__(self, message: str, *, attempts: int) -> None:
         self.attempts = attempts
+        self.provider_category = "HTTP_503"
         super().__init__(message)
+
+
+class GeminiProviderError(RuntimeError):
+    """Safe provider failure carrying only a bounded category."""
+
+    def __init__(self, category: str) -> None:
+        self.provider_category = category
+        super().__init__(f"Gemini provider request failed ({category}).")
 
 
 class GeminiClient:
@@ -54,16 +63,21 @@ class GeminiClient:
         if not prompt.strip():
             raise ValueError("The Gemini prompt must not be empty.")
 
-        response = self._generate_with_retry(
-            lambda: self._client.models.generate_content(
-                model=self.model,
-                contents=prompt,
+        try:
+            response = self._generate_with_retry(
+                lambda: self._client.models.generate_content(
+                    model=self.model,
+                    contents=prompt,
+                )
             )
-        )
-        response_text = response.text
-        if not response_text:
-            raise RuntimeError("Gemini returned an empty response.")
-        return response_text
+            response_text = response.text
+            if not response_text:
+                raise RuntimeError("Gemini returned an empty response.")
+            return response_text
+        except GeminiTransientError:
+            raise
+        except Exception as error:
+            raise GeminiProviderError(_provider_failure_category(error)) from error
 
     def generate_structured_json(
         self,
@@ -74,20 +88,25 @@ class GeminiClient:
         if not prompt.strip():
             raise ValueError("The Gemini prompt must not be empty.")
 
-        response = self._generate_with_retry(
-            lambda: self._client.models.generate_content(
-                model=self.model,
-                contents=prompt,
-                config=types.GenerateContentConfig(
-                    response_mime_type="application/json",
-                    response_schema=response_schema,
-                ),
+        try:
+            response = self._generate_with_retry(
+                lambda: self._client.models.generate_content(
+                    model=self.model,
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        response_mime_type="application/json",
+                        response_schema=response_schema,
+                    ),
+                )
             )
-        )
-        response_text = response.text
-        if not response_text:
-            raise RuntimeError("Gemini returned an empty response.")
-        return response_text
+            response_text = response.text
+            if not response_text:
+                raise RuntimeError("Gemini returned an empty response.")
+            return response_text
+        except GeminiTransientError:
+            raise
+        except Exception as error:
+            raise GeminiProviderError(_provider_failure_category(error)) from error
 
     def _generate_with_retry(self, operation: Callable[[], object]) -> object:
         """Run one request, retrying only transient HTTP 503 failures."""
@@ -100,7 +119,7 @@ class GeminiClient:
                 if retry_index == len(TRANSIENT_RETRY_DELAYS_SECONDS):
                     attempts = len(TRANSIENT_RETRY_DELAYS_SECONDS) + 1
                     raise GeminiTransientError(
-                        f"Gemini transient failure after {attempts} attempts: {error}",
+                        f"Gemini transient failure after {attempts} attempts.",
                         attempts=attempts,
                     ) from error
                 self._sleep(TRANSIENT_RETRY_DELAYS_SECONDS[retry_index])
@@ -117,6 +136,25 @@ def _is_transient_503(error: Exception) -> bool:
         return True
     message = str(error).casefold()
     return "503" in message and "unavailable" in message
+
+
+def _provider_failure_category(error: Exception) -> str:
+    """Classify provider failures without retaining exception text."""
+    status_code = getattr(error, "status_code", None)
+    code = getattr(error, "code", None)
+    values = {str(value).casefold() for value in (status_code, code) if value is not None}
+    message = str(error).casefold()
+    if "429" in values or "429" in message or "resource_exhausted" in message:
+        return "HTTP_429"
+    if "503" in values or "503" in message or "unavailable" in message:
+        return "HTTP_503"
+    if isinstance(error, TimeoutError) or "timeout" in message or "timed out" in message:
+        return "TIMEOUT"
+    if isinstance(error, ConnectionError) or any(
+        token in message for token in ("connection reset", "connection refused", "name or service not known")
+    ):
+        return "CONNECTION_ERROR"
+    return "API_ERROR"
 
 
 def create_gemini_client(model: str | None = None) -> GeminiClient:

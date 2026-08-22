@@ -9,7 +9,7 @@ from typing import Literal, Protocol
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from .extraction import NormalizedSource
-from .gemini_client import create_gemini_client
+from .gemini_client import GeminiProviderError, GeminiTransientError, create_gemini_client
 from .product_identification import ProductIdentificationResult
 
 
@@ -90,9 +90,10 @@ class GeminiAttributeExtractionResult(BaseModel):
 class AttributeExtractionError(RuntimeError):
     """Raised when Gemini output is malformed or unsupported by the source."""
 
-    def __init__(self, message: str, code: str = "ATTRIBUTE_EXTRACTION_FAILED") -> None:
+    def __init__(self, message: str, code: str = "ATTRIBUTE_EXTRACTION_FAILED", *, provider_category: str | None = None) -> None:
         self.code = code
         self.message = message
+        self.provider_category = provider_category
         super().__init__(message)
 
 
@@ -129,6 +130,12 @@ def extract_attribute_values(
         result = AttributeExtractionResult.model_validate(response.model_dump())
         _validate_against_input(result, source, product_identification)
         return result
+    except (GeminiProviderError, GeminiTransientError) as error:
+        raise AttributeExtractionError(
+            "Gemini attribute extraction request failed.",
+            "ATTRIBUTE_EXTRACTION_REQUEST_FAILED",
+            provider_category=error.provider_category,
+        ) from error
     except ValidationError as error:
         raise AttributeExtractionError(
             "Gemini returned attribute values that failed validation.",

@@ -7,7 +7,12 @@ from typing import Protocol
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from .extraction import NormalizedSource
-from .gemini_client import GeminiClient, create_gemini_client
+from .gemini_client import (
+    GeminiClient,
+    GeminiProviderError,
+    GeminiTransientError,
+    create_gemini_client,
+)
 
 
 class AttributeDefinition(BaseModel):
@@ -53,6 +58,10 @@ class ProductIdentificationResult(BaseModel):
 class ProductIdentificationError(RuntimeError):
     """Raised when product identification cannot produce a valid result."""
 
+    def __init__(self, message: str, *, provider_category: str | None = None) -> None:
+        self.provider_category = provider_category
+        super().__init__(message)
+
 
 class StructuredGeminiClient(Protocol):
     """Minimal client interface used by this stage, useful for deterministic tests."""
@@ -79,6 +88,11 @@ def identify_product(
             ProductIdentificationResult,
         )
         return ProductIdentificationResult.model_validate_json(raw_response)
+    except (GeminiProviderError, GeminiTransientError) as error:
+        raise ProductIdentificationError(
+            "Gemini product identification request failed.",
+            provider_category=error.provider_category,
+        ) from error
     except ValidationError as error:
         raise ProductIdentificationError(
             "Gemini returned a product schema that failed validation."

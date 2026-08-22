@@ -79,10 +79,21 @@ def run_pipeline(
         gemini_client = gemini_client or create_gemini_client()
         product_identification = identify_product(sources[0], gemini_client)
     except ProductIdentificationError as error:
+        category = _product_identification_failure_category(error)
+        provider_suffix = (
+            f" Provider category: {error.provider_category}."
+            if error.provider_category else ""
+        )
         raise ProductIntelligencePipelineError(
             "Product identification failed: "
-            f"{_product_identification_failure_category(error)}.",
+            f"{category}.",
             "PRODUCT_IDENTIFICATION_FAILED",
+            diagnostics=[
+                Diagnostic(
+                    code=category.upper(),
+                    message=str(error) + provider_suffix,
+                )
+            ],
         ) from error
     except Exception as error:
         raise ProductIntelligencePipelineError(
@@ -103,7 +114,13 @@ def run_pipeline(
             diagnostics.append(
                 Diagnostic(
                     code=error.code,
-                    message=error.message,
+                    message=(
+                        error.message
+                        + (
+                            f" Provider category: {error.provider_category}."
+                            if error.provider_category else ""
+                        )
+                    ),
                     source_id=source.source_id,
                     source_name=source.source_name,
                 )
