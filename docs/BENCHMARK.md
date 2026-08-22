@@ -28,15 +28,30 @@ rows were successfully enriched.
 
 ## Reference benchmark results
 
-The current documented 10-row benchmark snapshot is:
+The latest supplied 10-row benchmark snapshot is:
 
 | Final status | Rows | Accepted attributes |
 |---|---:|---:|
-| `ready` | 2 | 9 |
-| `needs_review` | 7 | 0 |
-| `blocked` | 1 | 0 |
+| `ready` | 6 | 46 |
+| `needs_review` | 4 | 0 |
+| `blocked` | 0 | 0 |
 | `failed` | 0 | 0 |
-| **Total** | **10** | **9** |
+| **Total** | **10** | **46** |
+
+Row-level results from that supplied artifact:
+
+| MPN | Status | Accepted attributes |
+|---|---|---:|
+| `DCB518ASTS06G` | `ready` | 4 |
+| `3MABR-7100075678` | `needs_review` | 0 |
+| `5B-332-080` | `ready` | 8 |
+| `49-94-0013` | `ready` | 8 |
+| `543302146` | `ready` | 8 |
+| `ADCB15516BS` | `needs_review` | 0 |
+| `1513724` | `needs_review` | 0 |
+| `1517603` | `needs_review` | 0 |
+| `576512` | `ready` | 9 |
+| `578808` | `ready` | 9 |
 
 `needs_review` is not a bad outcome. It is an intentional safety state for
 products where the system found useful evidence but could not safely resolve

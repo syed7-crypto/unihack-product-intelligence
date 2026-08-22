@@ -62,14 +62,14 @@ The concise judge walkthrough is in [docs/DEMO.md](docs/DEMO.md).
 
 ## Benchmark snapshot
 
-The documented 10-row snapshot contains:
+The latest supplied 10-row benchmark snapshot contains:
 
 | Status | Rows | Accepted attributes |
 |---|---:|---:|
-| `ready` | 2 | 9 |
-| `needs_review` | 7 | 0 |
-| `blocked` | 1 | 0 |
-| **Total** | **10** | **9** |
+| `ready` | 6 | 46 |
+| `needs_review` | 4 | 0 |
+| `blocked` | 0 | 0 |
+| **Total** | **10** | **46** |
 
 `needs_review` is an important trust-preserving outcome, not a bad result. It
 means the system has identified a case that requires human judgment instead
