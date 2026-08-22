@@ -272,6 +272,62 @@ class PipelineTests(unittest.TestCase):
         self.assertIsNotNone(error.__cause__)
         self.assertIsNotNone(error.__cause__.__cause__)
 
+    def test_attribute_response_validation_failure_preserves_category_and_chain(self) -> None:
+        source = extract_file(SAMPLES / "industrial_valve.txt")
+        client = SequentialGeminiClient([IDENTIFICATION_RESPONSE, {"attributes": []}])
+
+        with self.assertRaises(ProductIntelligencePipelineError) as context:
+            run_pipeline([source], client)
+
+        error = context.exception
+        self.assertEqual(error.code, "ATTRIBUTE_EXTRACTION_FAILED")
+        self.assertIn("ATTRIBUTE_RESPONSE_INVALID", str(error))
+        self.assertIsNotNone(error.__cause__)
+        self.assertEqual(error.__cause__.code, "ATTRIBUTE_RESPONSE_INVALID")
+        self.assertIsNotNone(error.__cause__.__cause__)
+
+    def test_attribute_semantic_failure_preserves_category_and_chain(self) -> None:
+        source = extract_file(SAMPLES / "industrial_valve.txt")
+        invalid = {
+            "attributes": [
+                {"name": "wrong_name", "value": None, "status": "not_found", "evidence": None}
+            ]
+        }
+        client = SequentialGeminiClient([IDENTIFICATION_RESPONSE, invalid])
+
+        with self.assertRaises(ProductIntelligencePipelineError) as context:
+            run_pipeline([source], client)
+
+        error = context.exception
+        self.assertEqual(error.code, "ATTRIBUTE_EXTRACTION_FAILED")
+        self.assertIn("ATTRIBUTE_EXTRACTION_INVALID", str(error))
+        self.assertEqual(error.__cause__.code, "ATTRIBUTE_EXTRACTION_INVALID")
+        self.assertIsNotNone(error.__cause__.__cause__)
+
+    def test_attribute_api_failure_preserves_category_without_secret_text(self) -> None:
+        source = extract_file(SAMPLES / "industrial_valve.txt")
+
+        class FailingAttributeClient:
+            def __init__(self) -> None:
+                self.calls = 0
+
+            def generate_structured_json(self, prompt: str, response_schema: type) -> str:
+                self.calls += 1
+                if self.calls == 1:
+                    return json.dumps(IDENTIFICATION_RESPONSE)
+                raise Exception("HTTP 503 secret-api-key=do-not-expose")
+
+        client = FailingAttributeClient()
+        with self.assertRaises(ProductIntelligencePipelineError) as context:
+            run_pipeline([source], client)
+
+        error = context.exception
+        self.assertEqual(error.code, "ATTRIBUTE_EXTRACTION_FAILED")
+        self.assertIn("ATTRIBUTE_EXTRACTION_REQUEST_FAILED", str(error))
+        self.assertNotIn("secret-api-key", str(error))
+        self.assertEqual(error.__cause__.code, "ATTRIBUTE_EXTRACTION_REQUEST_FAILED")
+        self.assertIsNotNone(error.__cause__.__cause__)
+
 
 if __name__ == "__main__":
     unittest.main()
