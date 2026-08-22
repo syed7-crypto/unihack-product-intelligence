@@ -16,6 +16,10 @@ DELIVERY_FIELDS = (
     "Ref URL 2",
     "Product Name",
     "MARKETING_DESCRIPTION",
+    "SHORT_DESC",
+    "LONG_DESC1",
+    "Application",
+    "Includes",
     "ITEM_FEATURES_1",
     "ITEM_FEATURES_2",
     "Product Image",
@@ -50,6 +54,8 @@ class VerifiedContentDeliveryTests(unittest.TestCase):
             source_type="web",
             product_name="Example Product",
             description="Official description",
+            application="Indoor use",
+            includes="Mounting hardware",
             features=["Feature one", "Feature two"],
             links=[
                 SourceLink(
@@ -83,6 +89,10 @@ class VerifiedContentDeliveryTests(unittest.TestCase):
         self.assertEqual(result["MFR URL"], content.canonical_url)
         self.assertEqual(result["Product Name"], "Example Product")
         self.assertEqual(result["MARKETING_DESCRIPTION"], "Official description")
+        self.assertEqual(result["SHORT_DESC"], "Example Product")
+        self.assertEqual(result["LONG_DESC1"], "Official description")
+        self.assertEqual(result["Application"], "Indoor use")
+        self.assertEqual(result["Includes"], "Mounting hardware")
         self.assertEqual(result["ITEM_FEATURES_1"], "Feature one")
         self.assertEqual(result["ITEM_FEATURES_2"], "Feature two")
         self.assertEqual(result["Product Image"], content.image_urls[0])

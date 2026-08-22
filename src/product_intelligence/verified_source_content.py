@@ -40,6 +40,8 @@ class VerifiedSourceContent(BaseModel):
     manufacturer_brand_text: str | None = None
     mpn_model_text: str | None = None
     description: str | None = None
+    application: str | None = None
+    includes: str | None = None
     features: list[str] = Field(default_factory=list)
     specification_text: list[str] = Field(default_factory=list)
     links: list[SourceLink] = Field(default_factory=list)
@@ -94,6 +96,8 @@ class _ProductContentParser(HTMLParser):
         self.manufacturer_brand_text: str | None = None
         self.mpn_model_text: str | None = None
         self.description: str | None = None
+        self.application: str | None = None
+        self.includes: str | None = None
         self.features: list[str] = []
         self.specification_text: list[str] = []
         self.links: list[SourceLink] = []
@@ -136,6 +140,10 @@ class _ProductContentParser(HTMLParser):
                     self.structured_meta.append((structured_key, content))
                 if "description" in tokens and self.description is None:
                     self.description = content
+                elif "application" in tokens and self.application is None:
+                    self.application = content
+                elif "includes" in tokens and self.includes is None:
+                    self.includes = content
                 elif "og:title" in tokens and self.page_title is None:
                     self.page_title = content
                 elif "brand" in tokens and self.manufacturer_brand_text is None:
@@ -176,6 +184,10 @@ class _ProductContentParser(HTMLParser):
                 self.mpn_model_text = text
             if element.context == "description" and self.description is None:
                 self.description = text
+            if element.context == "application" and self.application is None:
+                self.application = text
+            if element.context == "includes" and self.includes is None:
+                self.includes = text
             if tag == "li" and element.context == "features":
                 _append_unique(self.features, text)
             if element.context == "specifications" and tag in {"tr", "li", "dt", "dd", "p"}:
@@ -255,6 +267,11 @@ def extract_verified_source_content(
         parser.structured_meta,
     )
     structured = _merge_structured_data(visible_structured, structured_metadata)
+    specification_text = "\n".join(parser.specification_text)
+    if parser.application is None:
+        parser.application = _extract_explicit_named_field(specification_text, "application")
+    if parser.includes is None:
+        parser.includes = _extract_explicit_named_field(specification_text, "includes")
     if parser.manufacturer_brand_text is None:
         parser.manufacturer_brand_text = structured_metadata.get("brand")
     if parser.mpn_model_text is None:
@@ -270,6 +287,8 @@ def extract_verified_source_content(
         manufacturer_brand_text=parser.manufacturer_brand_text,
         mpn_model_text=parser.mpn_model_text,
         description=parser.description,
+        application=parser.application,
+        includes=parser.includes,
         features=parser.features,
         specification_text=parser.specification_text,
         links=parser.links,
@@ -316,7 +335,81 @@ def _extract_structured_data(text: str) -> StructuredProductData:
     values["packaging_information"] = _labelled_text(
         text, "standard packaging information|packaging information|packaging"
     )
+    _extract_labelled_rows(text, values)
     return StructuredProductData(**values)
+
+
+_LABELLED_ROW_PATTERN = re.compile(
+    r"(?i)^\s*(?P<label>standard\s+packaging\s+information|packaging\s+information|"
+    r"selling\s+quantity|selling\s+qty|package\s+quantity|pack\s+quantity|"
+    r"gtin(?:8|12|13|14)?|unspsc|upc|ean|length|height|width|weight|volume|warranty|"
+    r"packaging)\s*(?::|=|-|\s+)\s*(?P<value>.+?)\s*$"
+)
+_LABEL_ONLY_PATTERN = re.compile(
+    r"(?i)^\s*(standard\s+packaging\s+information|packaging\s+information|"
+    r"selling\s+quantity|selling\s+qty|package\s+quantity|pack\s+quantity|"
+    r"gtin(?:8|12|13|14)?|unspsc|upc|ean|length|height|width|weight|volume|warranty|"
+    r"packaging)\s*$"
+)
+
+
+def _extract_labelled_rows(text: str, values: dict[str, str | None]) -> None:
+    """Read explicit table/definition-list labels without parsing free prose."""
+    lines = [" ".join(line.split()) for line in text.splitlines() if line.strip()]
+    for index, line in enumerate(lines):
+        match = _LABELLED_ROW_PATTERN.fullmatch(line)
+        if match:
+            _store_labelled_value(values, match.group("label"), match.group("value"))
+            continue
+        label_match = _LABEL_ONLY_PATTERN.fullmatch(line)
+        if label_match and index + 1 < len(lines):
+            _store_labelled_value(values, label_match.group(1), lines[index + 1])
+
+
+def _store_labelled_value(
+    values: dict[str, str | None], label: str, raw_value: str
+) -> None:
+    key = re.sub(r"[^a-z0-9]", "", label.casefold())
+    value = " ".join(raw_value.split())
+    if not value:
+        return
+    identifier_aliases = {
+        "gtin8": "gtin",
+        "gtin12": "gtin",
+        "gtin13": "gtin",
+        "gtin14": "gtin",
+    }
+    if key in {"upc", "ean", "gtin", "gtin8", "gtin12", "gtin13", "gtin14", "unspsc"}:
+        target = identifier_aliases.get(key, key)
+        _set_if_missing(values, target, _compact_identifier(value))
+        if key == "gtin12":
+            _set_if_missing(values, "upc", _compact_identifier(value))
+        elif key == "gtin13":
+            _set_if_missing(values, "ean", _compact_identifier(value))
+        return
+    if key in {"length", "height", "width", "weight", "volume"}:
+        quantity = _split_structured_quantity(value)
+        if quantity is not None:
+            _set_if_missing(values, key, quantity[0])
+            _set_if_missing(values, f"{key}_uom", quantity[1])
+        return
+    if key in {"sellingquantity", "sellingqty", "packagequantity", "packquantity"}:
+        quantity = _split_structured_quantity(value)
+        if quantity is not None:
+            _set_if_missing(values, "selling_qty", quantity[0])
+            _set_if_missing(values, "selling_uom", quantity[1])
+        else:
+            _set_if_missing(values, "selling_qty", value)
+        return
+    if key in {"warranty"}:
+        _set_if_missing(values, "warranty", value)
+    elif key in {"packaging", "packaginginformation", "standardpackaginginformation"}:
+        _set_if_missing(values, "packaging_information", value)
+
+
+def _set_if_missing(values: dict[str, str | None], key: str, value: str) -> None:
+    if values.get(key) is None:
+        values[key] = value
 
 
 _MAX_JSONLD_PAYLOADS = 8
@@ -478,6 +571,19 @@ def _is_structured_product_key(value: str) -> bool:
     return _compact_structured_key(value) in _STRUCTURED_PRODUCT_KEYS
 
 
+def _extract_explicit_named_field(text: str, label: str) -> str | None:
+    """Extract a labelled field from structured/specification rows only."""
+    lines = [" ".join(line.split()) for line in text.splitlines() if line.strip()]
+    pattern = re.compile(rf"(?i)^\s*{re.escape(label)}\s*(?::|=|-|\s+)\s*(.+?)\s*$")
+    for index, line in enumerate(lines):
+        match = pattern.fullmatch(line)
+        if match:
+            return match.group(1).strip()
+        if line.casefold() == label.casefold() and index + 1 < len(lines):
+            return lines[index + 1]
+    return None
+
+
 def _labelled_text(text: str, labels: str) -> str | None:
     match = re.search(rf"(?im)^\s*(?:{labels})\s*[:=-]\s*(.+?)\s*$", text)
     return match.group(1).strip() if match else None
@@ -488,7 +594,7 @@ def _compact_identifier(value: str) -> str:
 
 
 def _context_for(tag: str, tokens: str, parent: str | None) -> str | None:
-    if parent in {"features", "specifications", "description"}:
+    if parent in {"features", "specifications", "description", "application", "includes"}:
         return parent
     if any(token in tokens for token in ("feature", "benefit")):
         return "features"
@@ -496,6 +602,10 @@ def _context_for(tag: str, tokens: str, parent: str | None) -> str | None:
         return "specifications"
     if any(token in tokens for token in ("description", "product-description")):
         return "description"
+    if "application" in tokens:
+        return "application"
+    if "includes" in tokens or "included" in tokens:
+        return "includes"
     if "brand" in tokens or "manufacturer" in tokens:
         return "brand"
     if any(token in tokens for token in ("mpn", "model", "sku")):

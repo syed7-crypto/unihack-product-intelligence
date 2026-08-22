@@ -138,6 +138,53 @@ class VerifiedSourceContentTests(unittest.TestCase):
             "Four units per carton",
         )
 
+    def test_extracts_explicit_table_and_definition_list_rows(self) -> None:
+        html = """
+        <html><body>
+          <h1>MODEL-123</h1>
+          <section id="specifications">
+            <table>
+              <tr><th>UPC</th><td>012345678905</td></tr>
+              <tr><th>Width</th><td>3.5 ft</td></tr>
+            </table>
+            <dl>
+              <dt>Weight</dt><dd>4.5 lb</dd>
+              <dt>Selling Quantity</dt><dd>4 each</dd>
+              <dt>Warranty</dt><dd>5 years limited</dd>
+            </dl>
+          </section>
+        </body></html>
+        """
+
+        result = extract_verified_source_content(verified_source(html))
+
+        self.assertEqual(result.structured.upc, "012345678905")
+        self.assertEqual(result.structured.width, "3.5")
+        self.assertEqual(result.structured.width_uom, "ft")
+        self.assertEqual(result.structured.weight, "4.5")
+        self.assertEqual(result.structured.weight_uom, "lb")
+        self.assertEqual(result.structured.selling_qty, "4")
+        self.assertEqual(result.structured.selling_uom, "each")
+        self.assertEqual(result.structured.warranty, "5 years limited")
+
+    def test_extracts_explicit_application_and_includes_fields(self) -> None:
+        html = """
+        <html><body>
+          <h1>MODEL-123</h1>
+          <section id="specifications">
+            <table>
+              <tr><th>Application</th><td>Indoor use</td></tr>
+              <tr><th>Includes</th><td>Mounting hardware</td></tr>
+            </table>
+          </section>
+        </body></html>
+        """
+
+        result = extract_verified_source_content(verified_source(html))
+
+        self.assertEqual(result.application, "Indoor use")
+        self.assertEqual(result.includes, "Mounting hardware")
+
     def test_extracts_bounded_json_ld_product_metadata(self) -> None:
         html = """
         <html><head>

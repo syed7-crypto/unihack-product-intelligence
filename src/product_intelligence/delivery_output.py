@@ -71,6 +71,10 @@ def map_verified_source_content_to_delivery(
     _set_if_present(delivery_row, schema, "MFR URL", content.canonical_url)
     _set_if_present(delivery_row, schema, "Product Name", content.product_name)
     _set_if_present(delivery_row, schema, "MARKETING_DESCRIPTION", content.description)
+    _set_if_present(delivery_row, schema, "SHORT_DESC", content.product_name)
+    _set_if_present(delivery_row, schema, "LONG_DESC1", content.description)
+    _set_if_present(delivery_row, schema, "Application", content.application)
+    _set_if_present(delivery_row, schema, "Includes", content.includes)
 
     for index, feature in enumerate(content.features[:20], start=1):
         _set_if_present(delivery_row, schema, f"ITEM_FEATURES_{index}", feature)
@@ -211,6 +215,10 @@ def _record_content_provenance(
         ("MFR URL", content.canonical_url),
         ("Product Name", content.product_name),
         ("MARKETING_DESCRIPTION", content.description),
+        ("SHORT_DESC", content.product_name),
+        ("LONG_DESC1", content.description),
+        ("Application", content.application),
+        ("Includes", content.includes),
         ("UPC", content.structured.upc),
         ("EAN", content.structured.ean),
         ("GTIN", content.structured.gtin),
