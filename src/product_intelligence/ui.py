@@ -6,6 +6,7 @@ import csv
 import io
 import os
 import tempfile
+import time
 from pathlib import Path
 from typing import Any
 
@@ -50,14 +51,19 @@ def render_app() -> None:
 
 
 def _render_run_page() -> None:
-    st.markdown("# Catalogue enrichment")
+    st.markdown("# Enrichment control room")
     st.markdown(
-        "Upload the raw catalogue and run the governed pipeline from source "
-        "discovery through delivery mapping."
+        "Run the governed catalogue pipeline and monitor each trust boundary "
+        "from discovery to delivery."
     )
+
+    batch = _get_batch()
+    _render_pipeline_stages(batch, running=False)
+    st.divider()
 
     left, right = st.columns((1.45, 1), gap="large")
     with left:
+        st.subheader("Inputs")
         catalogue_file = st.file_uploader(
             "Catalogue input CSV",
             type=["csv"],
@@ -69,6 +75,7 @@ def _render_run_page() -> None:
             st.caption(f"{len(rows):,} catalogue rows loaded")
 
     with right:
+        st.subheader("Run configuration")
         schema_file, schema_path = _schema_input()
         discovery_enabled = st.toggle(
             "Enable governed source discovery",
@@ -91,8 +98,23 @@ def _render_run_page() -> None:
         return
 
     st.divider()
-    if st.button("Run enrichment", type="primary", use_container_width=True):
+    action_col, state_col = st.columns((1, 1.8), gap="large")
+    with action_col:
+        run_clicked = st.button(
+            "▶  Run enrichment",
+            type="primary",
+            use_container_width=True,
+            disabled=not rows,
+        )
+    with state_col:
+        st.caption(
+            "Ready to run" if rows else "Upload a valid catalogue to enable the run."
+        )
+
+    if run_clicked:
+        started = time.perf_counter()
         batch = _run_catalogue(catalogue_file, schema_file, schema_path, discovery_enabled)
+        st.session_state["catalogue_run_duration"] = time.perf_counter() - started
         if batch is not None:
             st.session_state["catalogue_batch_result"] = batch
             st.session_state["catalogue_filename"] = catalogue_file.name
@@ -100,7 +122,63 @@ def _render_run_page() -> None:
 
     batch = _get_batch()
     if batch is not None:
-        _render_summary_metrics(batch)
+        st.divider()
+        st.subheader("Run summary")
+        _render_run_metrics(batch)
+        _render_pipeline_stages(batch, running=False)
+
+
+def _render_pipeline_stages(batch: BatchResult | None, *, running: bool) -> None:
+    """Show the fixed pipeline stages without duplicating backend behavior."""
+    stages = (
+        ("01", "Discovery", "Candidate sources"),
+        ("02", "Verification", "HTTPS + exact MPN"),
+        ("03", "Identification", "Product schema"),
+        ("04", "Enrichment", "Evidence-backed values"),
+        ("05", "Validation", "Confidence + conflicts"),
+        ("06", "Delivery", "252-column output"),
+    )
+    if running:
+        state = "running"
+    elif batch is not None:
+        state = "complete"
+    else:
+        state = "pending"
+    cols = st.columns(len(stages), gap="small")
+    for column, (number, name, detail) in zip(cols, stages):
+        with column:
+            marker = "●" if state == "complete" else ("◌" if state == "running" else "○")
+            st.markdown(
+                f'<div class="pipeline-stage {state}">'
+                f'<div class="stage-marker">{marker} {number}</div>'
+                f'<div class="stage-name">{name}</div>'
+                f'<div class="stage-detail">{detail}</div></div>',
+                unsafe_allow_html=True,
+            )
+
+
+def _render_run_metrics(batch: BatchResult) -> None:
+    verified_sources = sum(
+        sum(d.success for d in result.source_diagnostics)
+        for result in batch.row_results
+    )
+    accepted_attributes = sum(
+        sum(d.status == "mapped" for d in result.mapping_diagnostics)
+        for result in batch.row_results
+    )
+    duration = st.session_state.get("catalogue_run_duration")
+    duration_label = f"{duration:.1f}s" if isinstance(duration, (int, float)) else "—"
+    metrics = (
+        ("Products", batch.processed_rows),
+        ("Verified sources", verified_sources),
+        ("Accepted attributes", accepted_attributes),
+        ("Needs review", batch.needs_review_rows),
+        ("Blocked", batch.blocked_rows),
+        ("Duration", duration_label),
+    )
+    cols = st.columns(len(metrics), gap="small")
+    for column, (label, value) in zip(cols, metrics):
+        column.metric(label, value)
 
 
 def _schema_input() -> tuple[Any | None, Path | None]:
@@ -497,6 +575,12 @@ def _inject_styles() -> None:
         .stApp { background: #0b1118; color: var(--ink); }
         [data-testid="stSidebar"] { background: #0d151f; border-right: 1px solid var(--line); }
         [data-testid="stMetric"] { background: var(--panel); border: 1px solid var(--line); padding: 14px; border-radius: 8px; }
+        .pipeline-stage { min-height: 92px; padding: 12px; border: 1px solid var(--line); border-radius: 9px; background: var(--panel); }
+        .pipeline-stage.complete { border-color: #2c756d; }
+        .pipeline-stage.running { border-color: var(--accent); box-shadow: 0 0 0 1px rgba(85,214,190,.12); }
+        .stage-marker { color: var(--accent); font-size: .72rem; font-weight: 700; letter-spacing: .08em; }
+        .stage-name { color: var(--ink); font-weight: 700; margin-top: 7px; }
+        .stage-detail { color: var(--muted); font-size: .72rem; margin-top: 3px; line-height: 1.25; }
         .empty-state { border: 1px solid var(--line); background: var(--panel); border-radius: 10px; padding: 32px; margin-top: 24px; }
         .empty-kicker { color: var(--accent); font-size: 0.72rem; letter-spacing: 0.16em; font-weight: 700; }
         .empty-state h3 { margin: 8px 0 4px 0; }
