@@ -226,9 +226,20 @@ def _run_catalogue(
     progress = st.container(border=True)
     with progress:
         st.markdown("### Live execution")
+        activity = st.empty()
         current_stage = st.empty()
         completed_stages = st.empty()
         execution_detail = st.empty()
+
+        activity.markdown(
+            '<div class="execution-active">'
+            '<span class="activity-dot"></span>'
+            '<strong>Processing · Batch execution active</strong>'
+            '<span class="execution-copy">The governed pipeline is processing the catalogue. '
+            'This may take several minutes.</span>'
+            '</div>',
+            unsafe_allow_html=True,
+        )
 
     completed: list[str] = []
 
@@ -277,12 +288,14 @@ def _run_catalogue(
             )
 
         completed.extend(["Discovery", "Verification", "Identification", "Enrichment", "Validation", "Delivery"])
+        activity.success("Processing complete · Batch execution finished")
         update_progress(
             "Complete",
             f"Processed {batch.processed_rows:,} of {batch.total_rows:,} products",
         )
         return batch
     except Exception as error:
+        activity.error("Processing stopped · Batch execution failed")
         update_progress("Failed", "The run stopped before completion")
         st.error(f"The enrichment run could not be completed: {error}")
         return None
@@ -610,6 +623,10 @@ def _inject_styles() -> None:
         .stage-marker { color: var(--accent); font-size: .72rem; font-weight: 700; letter-spacing: .08em; }
         .stage-name { color: var(--ink); font-weight: 700; margin-top: 7px; }
         .stage-detail { color: var(--muted); font-size: .72rem; margin-top: 3px; line-height: 1.25; }
+        .execution-active { display: flex; align-items: center; gap: 9px; padding: 10px 12px; margin-bottom: 12px; border: 1px solid #2c756d; border-radius: 8px; background: rgba(85,214,190,.07); color: var(--ink); }
+        .execution-copy { color: var(--muted); font-size: .82rem; }
+        .activity-dot { width: 10px; height: 10px; flex: 0 0 10px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 0 rgba(85,214,190,.55); animation: execution-pulse 1.5s infinite; }
+        @keyframes execution-pulse { 0% { box-shadow: 0 0 0 0 rgba(85,214,190,.55); opacity: 1; } 70% { box-shadow: 0 0 0 9px rgba(85,214,190,0); opacity: .72; } 100% { box-shadow: 0 0 0 0 rgba(85,214,190,0); opacity: 1; } }
         .empty-state { border: 1px solid var(--line); background: var(--panel); border-radius: 10px; padding: 32px; margin-top: 24px; }
         .empty-kicker { color: var(--accent); font-size: 0.72rem; letter-spacing: 0.16em; font-weight: 700; }
         .empty-state h3 { margin: 8px 0 4px 0; }
