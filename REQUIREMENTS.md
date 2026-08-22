@@ -17,7 +17,7 @@
 - Explicit approved manufacturer URLs/domains and exact MPN verification.
 - Web/PDF normalization into the existing pipeline.
 - Evidence-backed controlled attribute/UOM mapping.
-- Exact 252-column delivery output.
+- Exact 252-column delivery output using the repository-owned canonical header at `data/unihack_delivery_schema.csv`.
 - Evaluation-only comparison with known-good rows.
 - Typed review issues and delivery gating.
 - Row-isolated batch orchestration with ordered outcomes and deterministic summaries.

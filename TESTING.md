@@ -34,7 +34,7 @@ The passing-test count is intentionally reported by each test run rather than ma
   domain-constrained searches, actual-page site-identity verification, retailer rejection, exact-MPN gating, and
   unknown-row review
 
-Tests use local controlled product, catalogue, delivery, and mock-reference fixtures. The expected delivery CSV is used for structure/evaluation only, never as product evidence.
+Tests use local controlled product, catalogue, delivery, and mock-reference fixtures. The canonical delivery header is stored at `data/unihack_delivery_schema.csv`. Any external expected-output CSV used by evaluation fixtures supplies structure/comparison data only and is never product evidence.
 
 `python scripts/run_real_pipeline.py` is a manual real-Gemini check and is not part of the normal suite.
 

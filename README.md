@@ -1,88 +1,81 @@
-# UniHack 2026 — Product Intelligence MVP
+# UniHack Product Intelligence
 
-UniHack Product Intelligence turns limited product documents or a catalogue row plus approved manufacturer sources into structured, evidence-backed product data. The MVP is deliberately fail-closed: unsupported facts are not accepted into delivery output.
+UniHack Product Intelligence enriches sparse catalogue rows and product documents into structured product data without turning plausible guesses into accepted facts. It is a hackathon MVP built around traceability, deterministic checks, and explicit human-review boundaries.
 
-## Implemented MVP
+## Problem
 
-Document intelligence includes TXT, JSON, and selectable-text PDF extraction into `NormalizedSource`, Gemini product identification and dynamic schemas, evidence-backed value extraction, the deterministic evidence firewall, cross-source validation, safe unit normalization, and explainable confidence scoring.
+Product catalogues commonly contain an MPN, a short description, and inconsistent manufacturer or brand fields. Useful source material may be distributed across manufacturer pages, PDFs, and documents. A system that fills gaps from unsupported inference can create confident-looking but unsafe catalogue data.
 
-The catalogue workflow includes typed CSV input, controlled manufacturer/brand/reference resolution, a small manually verified manufacturer/brand governance-policy registry, governed candidate discovery under an explicit domain policy, provider-neutral Brave and Serper Web Search API adapters, exact MPN verification, web/PDF normalization, generic single-row enrichment, safe row-isolated batch orchestration, the exact 252-column delivery schema, controlled attribute mapping, evaluation-only comparison, and the unified review/exception layer.
+## Solution
 
-Reference fixtures are mock/test data. No official UniHack reference masters are present in the repository.
+The system combines Gemini for product identification, dynamic attribute schemas, and source-backed extraction with Python-controlled verification. Catalogue enrichment resolves controlled identities, discovers candidates under a domain policy, verifies the exact MPN, normalizes the source, and reuses the document pipeline. Accepted values retain source evidence; unresolved or conflicting data stays visible for review.
 
-## Architecture
+## Pipeline
 
 ```text
-Document files → normalize → identify product/schema → extract values
-               → evidence firewall → validate → confidence
-
-Catalogue row → controlled references → manufacturer/brand policy → approved URLs → exact MPN
-              → normalize sources → existing document pipeline
-              → controlled mapping → review gate → 252-column row
+Catalogue row → controlled references → governed discovery
+              → exact MPN verification → source normalization
+              → identification → extraction → validation
+              → controlled mapping → review gate → delivery
 ```
 
-The catalogue workflow reuses the document/evidence pipeline; it does not create a second AI extraction architecture.
+Document inputs follow the same core path after TXT, JSON, or selectable-text PDF normalization. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the trust boundaries.
 
-## Safety and review
+## Key capabilities
 
-Gemini must use only supplied source text. Found values require matching source metadata, a quote present in source text, the value present in that quote, and valid location data. Invalid individual attribute proposals are removed from accepted extraction and surfaced as attribute-scoped review issues; independently valid attributes continue. Conflicts remain visible. Validation, unit comparison, confidence, reference approval, and delivery gating are deterministic Python logic.
+- Evidence-backed attributes with source, quote, and location checks.
+- Cross-source consistency and conflict preservation; no automatic conflict winner.
+- Supported unit normalization and explainable confidence scoring.
+- Controlled manufacturer, brand, reference, attribute, and UOM boundaries.
+- Exact MPN verification for retrieved web/PDF sources.
+- Ordered, row-isolated catalogue batch processing.
+- Candidate, search, runtime, review, and evaluation diagnostics.
 
-`ReviewReport` uses `ready`, `needs_review`, `blocked`, and `failed`. Review diagnostics never repair values, select conflict winners, or approve unsupported data. Blocked/review attributes are not mapped, while raw catalogue fields remain preserved.
+## Governance and verification
 
-## Limitations
+Search results, snippets, rankings, retailer pages, and raw manufacturer text are untrusted. A source becomes usable only after the configured policy and retrieval checks, exact MPN verification, and deterministic site-identity checks where applicable. Found values must cite text from the matching source. Invalid attribute proposals are excluded and reported; malformed pipeline responses fail the relevant run. Review diagnostics do not repair, approve, or choose values.
 
-- No official UniHack manufacturer, brand, taxonomy, attribute/LOV, or UOM masters are included.
-- Manufacturer enrichment uses explicitly supplied approved URLs/domains or a transient runtime policy whose
-  candidate domains have passed the same governance and verification boundary.
-- No unrestricted discovery, automatic batch searching, fuzzy manufacturer/MPN matching, or automatic cross-reference provider. Discovery candidates remain untrusted until the provider verifies them.
-- Real discovery requires `BRAVE_SEARCH_API_KEY`; missing configuration fails explicitly and never falls back to fake results.
-- Serper is an alternative configured provider using `SERPER_API_KEY`; the caller chooses the provider.
-- The governance-policy registry is not official UniHack reference data and does not cover all catalogue manufacturers.
-- Catalogue `Part_Manuf` values may identify distributors or catalogue organizations rather than manufacturers. Raw
-  manufacturer or arbitrary brand text never creates a trusted policy; unresolved identities remain blocked/reviewed.
-- The six original pilot MPN fixtures remain as compatibility entries. New products resolve policies by controlled
-  manufacturer/brand identity, not by product-specific application branches.
-- Batch discovery is optional and policy-gated; there is no automatic discovery for the full 1000-row catalogue.
-- Optional runtime resolution has three states: `KNOWN` uses a controlled policy; `RESOLVABLE` uses product-first
-  resolution: untrusted candidate-domain discovery, domain-constrained exact-MPN search, retrieval of the actual
-  manufacturer page, and deterministic site-identity verification before creating an ephemeral in-memory policy;
-  `UNKNOWN` becomes `NEEDS_REVIEW`. Search titles, snippets, ranking, and retailer results never become evidence or
-  trusted policy. Runtime policies never modify the trusted registry.
-- No RAG, graph database, OCR/image processing, production persistence, cloud deployment, or catalogue-management UI.
+## Delivery output
 
-## Setup and usage
+The application uses the repository-owned [`data/unihack_delivery_schema.csv`](data/unihack_delivery_schema.csv) header as its canonical delivery schema. It enforces exactly 252 unique, ordered columns. Only reference-approved and review-clear attributes are mapped. Raw catalogue fields are preserved, while missing, unresolved, conflicting, blocked, or review attributes remain out of delivery. The repository does not include official UniHack manufacturer, brand, taxonomy, or other reference masters.
+
+## Candidate telemetry
+
+Candidate telemetry records the MPN, candidate URL/domain, ranking and score, fetch result, exact-MPN result, identity result, and rejection code. It is diagnostic rather than evidence. The Streamlit Delivery page also exports bounded runtime and search diagnostics without provider payloads.
+
+## Review and status behavior
+
+Each row receives one status: `ready`, `needs_review`, `blocked`, or `failed`. `ready` is delivery-eligible; `needs_review` identifies unresolved or warning-level issues; `blocked` records a blocking issue that prevents safe delivery; `failed` records an execution failure. The UI keeps results, review diagnostics, and safely gated delivery as separate views.
+
+## Run the Streamlit demo
 
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
-streamlit run app.py
+streamlit run streamlit_app.py
 ```
 
-For live Gemini calls, create `.env` with `GEMINI_API_KEY` at the repository root. The key is never printed by the application.
+Upload only a catalogue CSV, then run enrichment. The Run page displays the locked `UniHack Required Schema · 252 columns` and loads the canonical header internally. Live Gemini or search-backed runs require the relevant local environment configuration; do not commit credentials. `app.py` remains an alternate Streamlit launcher.
 
-For a real, caller-selected discovery pilot, configure `BRAVE_SEARCH_API_KEY` and pass explicit manufacturer policies/domains. The discovery adapter returns candidates only; the existing enrichment provider must still verify every source.
+The concise judge walkthrough is in [docs/DEMO.md](docs/DEMO.md).
 
-Manual real-API check:
+## Benchmark snapshot
 
-```powershell
-python scripts/run_real_pipeline.py
-```
+The latest supplied 10-row benchmark snapshot contains:
 
-Run the automated suite:
+| Status | Rows | Accepted attributes |
+|---|---:|---:|
+| `ready` | 6 | 46 |
+| `needs_review` | 4 | 0 |
+| `blocked` | 0 | 0 |
+| **Total** | **10** | **46** |
 
-```powershell
-pytest
-```
-
-The current automated suite reports its exact passing count when run; the count is not a permanent contract.
-
-## Repository structure
-
-- `src/product_intelligence/` — pipeline, catalogue, review, and UI modules
-- `tests/` — deterministic unit and integration tests
-- `samples/industrial_valve/` — controlled TXT/JSON/PDF sources and output
-- `scripts/run_real_pipeline.py` — manual real-API runner
-- `app.py` — Streamlit entry point
-
-This is a focused hackathon MVP. Scale and production platform features remain future work.
+`needs_review` is an important trust-preserving outcome, not a bad result. It
+means the system has identified a case that requires human judgment instead
+of silently accepting uncertain identity, source, conflict, or validation
+data. The pipeline is designed to prefer a well-explained review decision to
+an unsafe automatic delivery. See [docs/BENCHMARK.md](docs/BENCHMARK.md) for
+the full benchmark context, latest timing, external-factor caveats, and
+runtime optimization roadmap. The latest supplied 10-row run took
+approximately **8 minutes 31 seconds**.
