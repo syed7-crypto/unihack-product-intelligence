@@ -100,6 +100,39 @@ Runtime is dominated by external network and model-provider operations rather
 than local Python computation. Consequently, observed elapsed time can vary
 substantially between runs.
 
+### Latest benchmark timing
+
+The latest supplied `runtime_diagnostics (5).csv` reports a total batch time
+of **511.33 seconds**, or approximately **8 minutes 31 seconds**, for the
+10-row run.
+
+| Instrumented phase | Aggregate time | Calls | Approximate share of total* |
+|---|---:|---:|---:|
+| Serper searches | 88.19 s | 66 | 17.2% |
+| Domain-constrained searches | 36.07 s | 28 | included in Serper |
+| Source retrieval | 23.72 s | 12 | 4.6% |
+| Product identification | 84.89 s | 6 | 16.6% |
+| Attribute extraction | 349.89 s | 6 | 68.4% |
+| Validation/delivery mapping | 0.014 s | — | negligible |
+
+\*The percentages are directional. Search timing is accumulated across
+individual requests, and domain-constrained time is a subset of search time;
+instrumented phase totals therefore should not be added as independent wall
+clock intervals. Parallel search can also make aggregate request time exceed
+the elapsed batch time.
+
+The largest measured contributor was Gemini attribute extraction: 349.89
+aggregate seconds across six requests, approximately 58.3 seconds per call.
+Product identification was the next significant model-provider phase at
+84.89 seconds. Search was also material at 66 requests, while local validation
+and delivery mapping were effectively zero-cost by comparison.
+
+External factors that can affect this runtime include Serper response latency,
+DNS/TLS and page-server latency, HTTP throttling, Gemini model queueing,
+provider quota/rate limits, transient 503 retries and backoff, network path
+quality, and variation in returned page size or model response time. These
+factors can change between identical runs without any code change.
+
 The deterministic automated test suite is separate from enrichment runtime.
 Its pass count and warnings must be taken from the actual test invocation;
 documentation does not pin a historical count because the suite changes as
@@ -152,6 +185,46 @@ The current safe configuration therefore keeps Gemini attribute extraction
 sequential while retaining bounded Serper parallelism.
 
 This is an intentional quality-over-latency trade-off.
+
+### Optimizations already implemented
+
+The project has already reduced avoidable runtime while preserving the trust
+model by:
+
+- parallelizing independent Serper discovery searches with a bounded pool of
+  three workers;
+- preserving original query order and deterministic candidate processing
+  after parallel search;
+- deduplicating generated queries and candidate URLs/domains;
+- using bounded candidate retrieval attempts and per-domain scheduling;
+- retaining sequential Gemini attribute extraction as the safe default after
+  the parallel experiment reduced enrichment quality;
+- adding runtime, per-search, and candidate telemetry so future changes can
+  be measured rather than judged only by wall-clock time.
+
+### Safe future improvements
+
+The safest next candidates for reducing runtime are:
+
+1. Add per-row timing and extraction outcome telemetry so slow or failed
+   Gemini calls can be separated from provider variability.
+2. Reuse verified search/retrieval results within one run where the URL,
+   MPN, policy, and fetched content are identical. Cache entries must retain
+   provenance and must not cross trust-policy boundaries.
+3. Remove only demonstrably redundant discovery queries after measuring their
+   recall contribution. Query removal must be evaluated against missed-source
+   cases, not just elapsed time.
+4. Consider bounded parallel source retrieval with deterministic merge order,
+   but only after measuring server throttling and preserving the existing
+   global attempt limit.
+5. Investigate Gemini request latency and provider quotas before considering
+   any Gemini concurrency. The previous parallel extraction experiment is not
+   a safe default because it produced fewer successful extracted results.
+
+Potentially faster approaches such as unrestricted concurrency, skipping
+search variants, removing retries, or weakening verification are not
+acceptable optimizations because they can reduce recall, reproducibility,
+provider reliability, or evidence quality.
 
 ## Current performance position
 

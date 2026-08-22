@@ -76,4 +76,6 @@ means the system has identified a case that requires human judgment instead
 of silently accepting uncertain identity, source, conflict, or validation
 data. The pipeline is designed to prefer a well-explained review decision to
 an unsafe automatic delivery. See [docs/BENCHMARK.md](docs/BENCHMARK.md) for
-the full benchmark context and runtime caveats.
+the full benchmark context, latest timing, external-factor caveats, and
+runtime optimization roadmap. The latest supplied 10-row run took
+approximately **8 minutes 31 seconds**.
