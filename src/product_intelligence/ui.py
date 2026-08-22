@@ -222,39 +222,68 @@ def _run_catalogue(
     schema_path: Path | None,
     discovery_enabled: bool,
 ) -> BatchResult | None:
+    started = time.perf_counter()
+    progress = st.container(border=True)
+    with progress:
+        st.markdown("### Live execution")
+        current_stage = st.empty()
+        completed_stages = st.empty()
+        execution_detail = st.empty()
+
+    completed: list[str] = []
+
+    def update_progress(stage: str, detail: str) -> None:
+        current_stage.markdown(f"**Current stage**  \n{stage}")
+        completed_stages.markdown(
+            "**Completed stages**  \n"
+            + (" → ".join(completed) if completed else "None yet")
+        )
+        execution_detail.caption(
+            f"{detail} · Elapsed {time.perf_counter() - started:.1f}s · "
+            "Per-row progress is not exposed by the batch runtime."
+        )
+
     try:
-        with st.status("Running governed enrichment", expanded=True) as status:
-            status.write("Parsing catalogue rows")
-            with tempfile.TemporaryDirectory(prefix="unihack_catalogue_") as directory:
-                root = Path(directory)
-                catalogue_path = root / Path(catalogue_file.name).name
-                catalogue_path.write_bytes(catalogue_file.getvalue())
+        update_progress("Preparing inputs", "Reading catalogue and delivery schema")
+        with tempfile.TemporaryDirectory(prefix="unihack_catalogue_") as directory:
+            root = Path(directory)
+            catalogue_path = root / Path(catalogue_file.name).name
+            catalogue_path.write_bytes(catalogue_file.getvalue())
 
-                if schema_file is not None:
-                    local_schema_path = root / "delivery_schema.csv"
-                    local_schema_path.write_bytes(schema_file.getvalue())
-                    schema = load_delivery_schema(local_schema_path)
-                elif schema_path is not None:
-                    schema = load_delivery_schema(schema_path)
-                else:
-                    raise ValueError("An official delivery schema is required.")
+            if schema_file is not None:
+                local_schema_path = root / "delivery_schema.csv"
+                local_schema_path.write_bytes(schema_file.getvalue())
+                schema = load_delivery_schema(local_schema_path)
+            elif schema_path is not None:
+                schema = load_delivery_schema(schema_path)
+            else:
+                raise ValueError("An official delivery schema is required.")
 
-                status.write("Discovering and verifying manufacturer sources")
-                search_provider = (
-                    SerperSearchProvider.from_environment()
-                    if discovery_enabled else None
-                )
-                status.write("Running extraction, evidence validation, and delivery mapping")
-                batch = run_catalogue_batch(
-                    catalogue_path,
-                    schema,
-                    discovery_enabled=discovery_enabled,
-                    runtime_policy_resolution_enabled=discovery_enabled,
-                    search_provider=search_provider,
-                )
-            status.update(label="Enrichment complete", state="complete", expanded=False)
+            completed.append("Inputs")
+            update_progress(
+                "Discovery → Delivery",
+                "The synchronous batch runtime is executing its governed pipeline",
+            )
+            search_provider = (
+                SerperSearchProvider.from_environment()
+                if discovery_enabled else None
+            )
+            batch = run_catalogue_batch(
+                catalogue_path,
+                schema,
+                discovery_enabled=discovery_enabled,
+                runtime_policy_resolution_enabled=discovery_enabled,
+                search_provider=search_provider,
+            )
+
+        completed.extend(["Discovery", "Verification", "Identification", "Enrichment", "Validation", "Delivery"])
+        update_progress(
+            "Complete",
+            f"Processed {batch.processed_rows:,} of {batch.total_rows:,} products",
+        )
         return batch
     except Exception as error:
+        update_progress("Failed", "The run stopped before completion")
         st.error(f"The enrichment run could not be completed: {error}")
         return None
 
