@@ -22,30 +22,35 @@ Therefore, the live benchmark should be interpreted as an end-to-end
 functional and quality evaluation of the selected 10-row subset. It does not
 establish 1,000-row accuracy, coverage, or production-scale throughput.
 
-The repository may contain larger input data, but the checked-in result
-artifacts and benchmark observations should not be interpreted as evidence
-that all 1,000 rows were successfully enriched.
+The repository may contain larger input data, but benchmark observations and
+local result artifacts should not be interpreted as evidence that all 1,000
+rows were successfully enriched.
 
-## Checked-in result snapshot
+## Reference benchmark results
 
-The checked-in `result.csv` contains 10 selected catalogue rows:
+The current documented 10-row benchmark snapshot is:
 
-| Status         |   Rows | Accepted attributes |
-| -------------- | -----: | ------------------: |
-| `ready`        |      2 |                   9 |
-| `needs_review` |      7 |                   0 |
-| `blocked`      |      1 |                   0 |
-| `failed`       |      0 |                   0 |
-| **Total**      | **10** |               **9** |
+| Final status | Rows | Accepted attributes |
+|---|---:|---:|
+| `ready` | 2 | 9 |
+| `needs_review` | 7 | 0 |
+| `blocked` | 1 | 0 |
+| `failed` | 0 | 0 |
+| **Total** | **10** | **9** |
 
-The checked-in `review.csv` contains 15 review issues.
+`needs_review` is not a bad outcome. It is an intentional safety state for
+products where the system found useful evidence but could not safely resolve
+an identity, source, conflict, validation issue, or another decision required
+for automatic delivery. It protects the catalogue from unsupported guesses
+and gives a reviewer a focused diagnostic to resolve. A high-quality pipeline
+should prefer a trustworthy review outcome over an unsafe `ready` result.
 
-The checked-in `candidate_telemetry.csv` contains 14 candidate records,
-including candidates that were skipped, rejected, not fetched, not verified,
-conflicted, or successfully verified.
-
-These files represent a particular checked-in run and are not intended to
-serve as a guaranteed live benchmark.
+`review.csv` contains the row-level explanations for these outcomes, while
+`candidate_telemetry.csv` records bounded candidate decisions, including
+candidates that were skipped, rejected, not fetched, not verified,
+conflicted, or successfully verified. These files describe this benchmark
+snapshot; future live runs may differ because search, retrieval, and Gemini
+providers are external services.
 
 ## Runtime measurement
 
@@ -81,11 +86,9 @@ than local Python computation. Consequently, observed elapsed time can vary
 substantially between runs.
 
 The deterministic automated test suite is separate from enrichment runtime.
-For the checked-in repository state documented here, the test suite reported:
-
-```text
-361 passed, 1 warning, 28 subtests passed
-```
+Its pass count and warnings must be taken from the actual test invocation;
+documentation does not pin a historical count because the suite changes as
+the branch evolves.
 
 This is test-suite runtime, not catalogue enrichment runtime.
 
@@ -178,8 +181,10 @@ column coverage.
 
 ## Delivery coverage
 
-The delivery schema contains exactly 252 ordered columns when the expected
-delivery header is supplied.
+The delivery schema contains exactly 252 ordered columns. Normal application
+execution loads the canonical header from
+`data/unihack_delivery_schema.csv`; external expected-output headers are only
+used when an evaluation or fixture explicitly requests them.
 
 The mapper already supports a broad range of fields, including:
 

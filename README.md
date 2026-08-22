@@ -37,7 +37,7 @@ Search results, snippets, rankings, retailer pages, and raw manufacturer text ar
 
 ## Delivery output
 
-When supplied with the expected delivery header, the delivery adapter enforces exactly 252 unique, ordered columns. Only reference-approved and review-clear attributes are mapped. Raw catalogue fields are preserved, while missing, unresolved, conflicting, blocked, or review attributes remain out of delivery. The repository does not include official UniHack reference masters.
+The application uses the repository-owned [`data/unihack_delivery_schema.csv`](data/unihack_delivery_schema.csv) header as its canonical delivery schema. It enforces exactly 252 unique, ordered columns. Only reference-approved and review-clear attributes are mapped. Raw catalogue fields are preserved, while missing, unresolved, conflicting, blocked, or review attributes remain out of delivery. The repository does not include official UniHack manufacturer, brand, taxonomy, or other reference masters.
 
 ## Candidate telemetry
 
@@ -56,10 +56,24 @@ pip install -r requirements.txt
 streamlit run streamlit_app.py
 ```
 
-Upload a catalogue CSV and the expected-output CSV used to define the 252-column delivery schema, then run enrichment. Live Gemini or search-backed runs require the relevant local environment configuration; do not commit credentials. `app.py` remains an alternate Streamlit launcher.
+Upload only a catalogue CSV, then run enrichment. The Run page displays the locked `UniHack Required Schema · 252 columns` and loads the canonical header internally. Live Gemini or search-backed runs require the relevant local environment configuration; do not commit credentials. `app.py` remains an alternate Streamlit launcher.
 
 The concise judge walkthrough is in [docs/DEMO.md](docs/DEMO.md).
 
-## Verified snapshot
+## Benchmark snapshot
 
-The checked-in [result.csv](result.csv) snapshot contains 10 catalogue rows: 2 `ready`, 7 `needs_review`, and 1 `blocked`, with 9 accepted attributes total. The companion [review.csv](review.csv) contains 15 review issues, and [candidate_telemetry.csv](candidate_telemetry.csv) contains 14 candidate records. These are one externally sourced snapshot, not a promise of stable live-search results. The current deterministic suite reports `361 passed, 1 warning, 28 subtests passed` in 2.42 seconds in the repository virtual environment. See [docs/BENCHMARK.md](docs/BENCHMARK.md) for scope and runtime caveats.
+The documented 10-row snapshot contains:
+
+| Status | Rows | Accepted attributes |
+|---|---:|---:|
+| `ready` | 2 | 9 |
+| `needs_review` | 7 | 0 |
+| `blocked` | 1 | 0 |
+| **Total** | **10** | **9** |
+
+`needs_review` is an important trust-preserving outcome, not a bad result. It
+means the system has identified a case that requires human judgment instead
+of silently accepting uncertain identity, source, conflict, or validation
+data. The pipeline is designed to prefer a well-explained review decision to
+an unsafe automatic delivery. See [docs/BENCHMARK.md](docs/BENCHMARK.md) for
+the full benchmark context and runtime caveats.

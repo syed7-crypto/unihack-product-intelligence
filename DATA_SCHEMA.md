@@ -24,7 +24,7 @@ This document describes the implemented Pydantic models and catalogue structures
 
 `CatalogInputRow` represents exactly: `Mfg_Part_Num`, `Part_Desc`, `E1_Brand`, `Unilog_Brand`, `DIB_Brand`, and `Part_Manuf`. Raw values are preserved. `Part_Manuf` is not blindly copied into `MANUFACTURER_NAME`.
 
-`DeliverySchema` loads the ordered header from the supplied expected-output CSV and enforces exactly 252 unique columns. Delivery rows are exact ordered mappings validated against that schema.
+`DeliverySchema` validates an ordered header and enforces exactly 252 unique columns. Normal Streamlit execution loads the repository-owned canonical header from `data/unihack_delivery_schema.csv`; delivery rows are exact ordered mappings validated against that schema. External header loading remains available for fixtures and evaluation tools where explicitly required.
 
 `CatalogueEnrichmentResult` contains `catalogue_row`, optional `pipeline_result`, `delivery_row`, `source_diagnostics`, `reference_resolution`, `mapping_diagnostics`, optional `evaluation_comparison`, and `review`.
 

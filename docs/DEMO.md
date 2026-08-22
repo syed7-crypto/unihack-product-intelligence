@@ -2,7 +2,7 @@
 
 ## 1. Input
 
-Open the Streamlit app and go to **Run**. Upload a catalogue CSV. Upload the expected-output CSV when you want the exact 252-column delivery schema; the app requires that schema before it can create delivery rows.
+Open the Streamlit app and go to **Run**. Upload a catalogue CSV. The application automatically uses the locked repository-owned `data/unihack_delivery_schema.csv` header for the exact 252-column delivery schema; no schema upload is required.
 
 ## 2. Run
 
@@ -27,4 +27,4 @@ Open **Delivery** to inspect and download the safely gated output. The page also
 3. Exact MPN verification and identity checks precede extraction.
 4. Conflicts and missing evidence stay visible instead of being guessed through.
 5. The status summary distinguishes `ready`, `needs_review`, `blocked`, and `failed`.
-6. The final output is constrained to the supplied 252-column schema.
+6. The final output is constrained to the locked canonical 252-column schema.
