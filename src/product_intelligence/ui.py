@@ -557,6 +557,7 @@ def build_candidate_telemetry_rows(batch: BatchResult) -> list[dict[str, Any]]:
             "MPN": item.mfg_part_num,
             "candidate_url": telemetry.url,
             "domain": telemetry.domain,
+            "query": telemetry.query or "",
             "ranking": ranking.decision if ranking is not None else "",
             "decision": ranking.decision if ranking is not None else "",
             "score": ranking.score if ranking is not None else "",
@@ -578,7 +579,7 @@ def build_candidate_telemetry_rows(batch: BatchResult) -> list[dict[str, Any]]:
 def candidate_telemetry_csv_bytes(batch: BatchResult) -> bytes:
     """Serialize candidate diagnostics separately from result/review CSVs."""
     fieldnames = [
-        "MPN", "candidate_url", "domain", "ranking", "decision", "score",
+        "MPN", "query", "candidate_url", "domain", "ranking", "decision", "score",
         "fetched", "http_status", "content_type", "exact_mpn",
         "identity_value", "identity_kind", "identity_result", "rejection_code",
     ]

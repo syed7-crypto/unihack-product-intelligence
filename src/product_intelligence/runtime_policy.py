@@ -13,7 +13,11 @@ from pydantic import BaseModel, Field
 from .catalog_input import CatalogInputRow, brand_candidate
 from .candidate_ranking import CandidateRanking, rank_candidate
 from .manufacturer_enrichment import ManufacturerEnrichmentProvider, ManufacturerSource
-from .pilot_policies import ControlledSourcePolicy, resolve_source_policy_for_row
+from .pilot_policies import (
+    ControlledSourcePolicy,
+    get_controlled_source_policy,
+    resolve_source_policy_for_row,
+)
 from .reference_data import (
     BrandReference,
     IdentityAssertion,
@@ -30,6 +34,7 @@ IdentityFailureCode = Literal[
     "NO_TRUSTWORTHY_SOURCE",
     "MANUFACTURER_IDENTITY_CONFLICT",
 ]
+MAX_GOVERNED_DISCOVERY_DOMAINS = 3
 
 
 class RuntimeAuthorityEvidence(BaseModel):
@@ -55,6 +60,7 @@ class RuntimeDomainCandidate(BaseModel):
     domain: str = Field(min_length=1)
     identity_hint: str | None = None
     discovery_url: str | None = None
+    discovery_query: str | None = None
     discovery_rank: int = Field(default=1, ge=1)
     ranking: CandidateRanking | None = None
 
@@ -80,6 +86,7 @@ class CandidateTelemetry(BaseModel):
 
     url: str = ""
     domain: str = ""
+    query: str | None = None
     ranking: CandidateRanking | None = None
     fetched: bool = False
     http_status: int | None = None
@@ -198,11 +205,18 @@ def resolve_identity_and_source_policy(
         if candidate_domain_provider is not None:
             domain_candidates = list(candidate_domain_provider(row))[:max_candidate_domains]
         else:
-            search_results: list[SearchResult] = []
+            search_results: list[tuple[SearchResult, str]] = []
             search_errors: list[str] = []
-            for query in _runtime_discovery_queries(row):
+            for query in _runtime_discovery_queries(
+                row,
+                manufacturer_reference=manufacturer_reference,
+                brand_reference=brand_reference,
+            ):
                 try:
-                    search_results.extend(search_provider.search(query, max_results))
+                    search_results.extend(
+                        (result, query)
+                        for result in search_provider.search(query, max_results)
+                    )
                 except Exception as error:
                     search_errors.append(f"Search failed for query '{query}': {error}")
             diagnostics.extend(search_errors)
@@ -214,7 +228,7 @@ def resolve_identity_and_source_policy(
                 manufacturer_reference=manufacturer_reference,
                 brand_reference=brand_reference,
             )
-            for result in search_results:
+            for result, query in search_results:
                 ranking = rank_candidate(
                     url=result.url,
                     title=result.title,
@@ -225,10 +239,10 @@ def resolve_identity_and_source_policy(
                     approved_domain=False,
                     exact_mpn_in_result=_contains_runtime_mpn(result, row.Mfg_Part_Num),
                 )
-                ranked_results.append((result, ranking))
-            ranked_results.sort(
-                key=lambda item: (-item[1].score, search_results.index(item[0]))
-            )
+                ranked_results.append((result, ranking, query))
+            # Python's stable sort preserves the existing search/provider order
+            # for equal scores; query expansion does not alter ranking ties.
+            ranked_results.sort(key=lambda item: -item[1].score)
             domain_candidates = _domain_candidates_from_search(
                 ranked_results, max_candidate_domains
             )
@@ -243,7 +257,7 @@ def resolve_identity_and_source_policy(
     retrieval_failure_seen = False
     attempted_sources = 0
     candidate_telemetry: list[CandidateTelemetry] = []
-    domain_queues: list[tuple[RuntimeDomainCandidate, str, list[str]]] = []
+    domain_queues: list[tuple[RuntimeDomainCandidate, str, list[str], str]] = []
     for domain_candidate in domain_candidates:
         domain = _normalize_candidate_domain(domain_candidate.domain)
         if domain is None:
@@ -251,6 +265,7 @@ def resolve_identity_and_source_policy(
                 CandidateTelemetry(
                     url=domain_candidate.discovery_url or "",
                     domain=domain_candidate.domain,
+                    query=domain_candidate.discovery_query,
                     ranking=domain_candidate.ranking,
                     rejection_code="INVALID_HTTPS_CANDIDATE",
                     identity_result="not_considered",
@@ -263,6 +278,7 @@ def resolve_identity_and_source_policy(
                 CandidateTelemetry(
                     url=domain_candidate.discovery_url or "",
                     domain=domain,
+                    query=domain_candidate.discovery_query,
                     ranking=domain_candidate.ranking,
                     rejection_code="RETAILER_DOMAIN_REJECTED",
                     identity_result="not_considered",
@@ -275,6 +291,7 @@ def resolve_identity_and_source_policy(
                 CandidateTelemetry(
                     url=domain_candidate.discovery_url or "",
                     domain=domain,
+                    query=domain_candidate.discovery_query,
                     ranking=domain_candidate.ranking,
                     rejection_code="CANDIDATE_RANKING_BAD",
                     identity_result="not_considered",
@@ -285,16 +302,16 @@ def resolve_identity_and_source_policy(
                 + "; ".join(domain_candidate.ranking.reasons)
             )
             continue
+        domain_query = f'site:{domain} "{row.Mfg_Part_Num.strip()}"'
         try:
-            domain_results = search_provider.search(
-                f'site:{domain} "{row.Mfg_Part_Num.strip()}"', max_domain_searches
-            )
+            domain_results = search_provider.search(domain_query, max_domain_searches)
         except Exception as error:
             retrieval_failure_seen = True
             candidate_telemetry.append(
                 CandidateTelemetry(
                     url=domain_candidate.discovery_url or "",
                     domain=domain,
+                    query=domain_query,
                     ranking=domain_candidate.ranking,
                     rejection_code="DOMAIN_SEARCH_FAILED",
                     identity_result="not_considered",
@@ -308,22 +325,23 @@ def resolve_identity_and_source_policy(
             candidate_urls.insert(0, domain_candidate.discovery_url)
         unique_urls = list(dict.fromkeys(candidate_urls))
         if unique_urls:
-            domain_queues.append((domain_candidate, domain, unique_urls))
+            domain_queues.append((domain_candidate, domain, unique_urls, domain_query))
 
     # Schedule one URL per domain per round. This preserves the global attempt
     # limit while preventing one domain's result list from consuming it all.
-    scheduled_candidates: list[tuple[RuntimeDomainCandidate, str, str]] = []
+    scheduled_candidates: list[tuple[RuntimeDomainCandidate, str, str, str]] = []
     while any(queue[2] for queue in domain_queues):
-        for domain_candidate, domain, urls in domain_queues:
+        for domain_candidate, domain, urls, domain_query in domain_queues:
             if urls:
-                scheduled_candidates.append((domain_candidate, domain, urls.pop(0)))
+                scheduled_candidates.append((domain_candidate, domain, urls.pop(0), domain_query))
 
-    for domain_candidate, domain, url in scheduled_candidates:
+    for domain_candidate, domain, url, domain_query in scheduled_candidates:
         if attempted_sources >= max_source_attempts:
             candidate_telemetry.append(
                 CandidateTelemetry(
                     url=url,
                     domain=domain,
+                    query=domain_query,
                     ranking=domain_candidate.ranking,
                     rejection_code="ATTEMPT_LIMIT_REACHED",
                     identity_result="not_fetched",
@@ -340,6 +358,7 @@ def resolve_identity_and_source_policy(
             domain_candidate=domain_candidate,
             domain=domain,
             url=url,
+            query=domain_query,
             enrichment_provider=enrichment_provider,
             site_identity_verifier=site_identity_verifier,
             manufacturer_reference=manufacturer_reference,
@@ -401,6 +420,7 @@ def _verify_runtime_candidate(
     domain_candidate: RuntimeDomainCandidate,
     domain: str,
     url: str,
+    query: str,
     enrichment_provider: ManufacturerEnrichmentProvider,
     site_identity_verifier: RuntimeSiteIdentityVerifier | None,
     manufacturer_reference: ManufacturerReference | None,
@@ -412,6 +432,7 @@ def _verify_runtime_candidate(
     telemetry = CandidateTelemetry(
         url=url,
         domain=domain,
+        query=query,
         ranking=domain_candidate.ranking,
         fetched=True,
     )
@@ -524,6 +545,7 @@ def _resolve_with_legacy_authority_verifier(
             candidate_telemetry.append(CandidateTelemetry(
                 url=candidate.url,
                 domain=domain,
+                query=row.Mfg_Part_Num.strip(),
                 rejection_code="CANDIDATE_GOVERNANCE_REJECTED",
                 identity_result="not_considered",
             ))
@@ -534,6 +556,7 @@ def _resolve_with_legacy_authority_verifier(
             candidate_telemetry.append(CandidateTelemetry(
                 url=candidate.url,
                 domain=domain,
+                query=row.Mfg_Part_Num.strip(),
                 identity_result="not_verified",
                 rejection_code="IDENTITY_AUTHORITY_NOT_VERIFIED",
             ))
@@ -550,6 +573,7 @@ def _resolve_with_legacy_authority_verifier(
             candidate_telemetry.append(CandidateTelemetry(
                 url=candidate.url,
                 domain=domain,
+                query=row.Mfg_Part_Num.strip(),
                 identity_value=evidence.controlled_identity,
                 identity_kind=evidence.identity_kind,
                 identity_result="conflict",
@@ -561,6 +585,7 @@ def _resolve_with_legacy_authority_verifier(
             candidate_telemetry.append(CandidateTelemetry(
                 url=candidate.url,
                 domain=domain,
+                query=row.Mfg_Part_Num.strip(),
                 rejection_code="ATTEMPT_LIMIT_REACHED",
                 identity_result="not_fetched",
             ))
@@ -573,6 +598,7 @@ def _resolve_with_legacy_authority_verifier(
         telemetry = CandidateTelemetry(
             url=candidate.url,
             domain=domain,
+            query=row.Mfg_Part_Num.strip(),
             fetched=True,
             identity_value=evidence.controlled_identity,
             identity_kind=evidence.identity_kind,
@@ -671,16 +697,16 @@ def _is_transport_retrieval_failure(error: str) -> bool:
 
 
 def _domain_candidates_from_search(
-    results: Sequence[tuple[SearchResult, CandidateRanking]] | Sequence[SearchResult],
+    results: Sequence[tuple[SearchResult, CandidateRanking, str]] | Sequence[SearchResult],
     max_candidate_domains: int,
 ) -> list[RuntimeDomainCandidate]:
     candidates: list[RuntimeDomainCandidate] = []
     seen: set[str] = set()
     for rank, item in enumerate(results, start=1):
         if isinstance(item, tuple):
-            result, ranking = item
+            result, ranking, query = item
         else:
-            result, ranking = item, None
+            result, ranking, query = item, None, None
         parsed = urlparse(result.url)
         domain = (parsed.hostname or "").casefold().rstrip(".")
         if parsed.scheme.casefold() != "https" or not domain or domain in seen:
@@ -691,6 +717,7 @@ def _domain_candidates_from_search(
             domain=domain,
             identity_hint=hint,
             discovery_url=None,
+            discovery_query=query,
             discovery_rank=rank,
             ranking=ranking,
         ))
@@ -706,7 +733,12 @@ def _contains_runtime_mpn(result: SearchResult, expected_mpn: str) -> bool:
     )
 
 
-def _runtime_discovery_queries(row: CatalogInputRow) -> list[str]:
+def _runtime_discovery_queries(
+    row: CatalogInputRow,
+    *,
+    manufacturer_reference: ManufacturerReference | None = None,
+    brand_reference: BrandReference | None = None,
+) -> list[str]:
     """Build identity-aware initial queries for rows without a policy.
 
     The MPN remains the final fallback.  Manufacturer/brand values are query
@@ -730,13 +762,126 @@ def _runtime_discovery_queries(row: CatalogInputRow) -> list[str]:
 
     queries: list[str] = []
     seen: set[str] = set()
+
+    def add_query(query: str) -> None:
+        normalized = normalize_reference_value(query)
+        if query and normalized not in seen:
+            seen.add(normalized)
+            queries.append(query)
+
     for identity in (*identities, ""):
         query = " ".join(part for part in (part_number, identity) if part).strip()
-        key = normalize_reference_value(query)
-        if query and key not in seen:
-            seen.add(key)
-            queries.append(query)
+        add_query(query)
+
+    governed_domains = _controlled_catalogue_identity_domains(
+        row,
+        manufacturer_reference=manufacturer_reference,
+        brand_reference=brand_reference,
+    )
+    for domain in governed_domains:
+        add_query(f'site:{domain} "{part_number}"')
+
+    # One bounded ecosystem/distributor variant improves recall for catalogue
+    # rows whose useful source may be a governed secondary channel. It is a
+    # discovery hint only; every result still passes the existing gates.
+    if not governed_domains:
+        brand = next(
+            (
+                brand_candidate(getattr(row, field))
+                for field in ("E1_Brand", "Unilog_Brand", "DIB_Brand")
+                if brand_candidate(getattr(row, field))
+            ),
+            None,
+        )
+        if brand:
+            add_query(f"{part_number} {brand} distributor")
+
+    if not _has_strong_catalogue_query_identity(
+        row,
+        manufacturer_reference=manufacturer_reference,
+        brand_reference=brand_reference,
+    ):
+        for suffix in ("manufacturer", "product"):
+            add_query(f"{part_number} {suffix}")
     return queries
+
+
+def _controlled_catalogue_identity_domains(
+    row: CatalogInputRow,
+    *,
+    manufacturer_reference: ManufacturerReference | None = None,
+    brand_reference: BrandReference | None = None,
+) -> tuple[str, ...]:
+    """Return domains only from existing controlled identity policies.
+
+    Raw catalogue values are never converted into domains. A raw value can
+    contribute here only when it exactly resolves to an identity already
+    present in the controlled policy registry; the returned domains are used
+    for discovery hints and do not authorize a source.
+    """
+    identities: list[tuple[str, RuntimeIdentityKind]] = []
+
+    if manufacturer_reference is not None:
+        resolved = manufacturer_reference.resolve(row.Part_Manuf)
+        if resolved.status == "resolved" and isinstance(resolved.resolved_value, str):
+            identities.append((resolved.resolved_value, "manufacturer"))
+
+    if brand_reference is not None:
+        for field in ("E1_Brand", "Unilog_Brand", "DIB_Brand"):
+            candidate = brand_candidate(getattr(row, field))
+            if not candidate:
+                continue
+            resolved = brand_reference.resolve(candidate)
+            if resolved.status == "resolved" and isinstance(resolved.resolved_value, str):
+                identities.append((resolved.resolved_value, "brand"))
+
+    # This is deliberately an exact lookup against controlled policy data, not
+    # a conversion of arbitrary text into a domain.
+    for field, kind in (
+        ("Part_Manuf", "manufacturer"),
+        ("E1_Brand", "brand"),
+        ("Unilog_Brand", "brand"),
+        ("DIB_Brand", "brand"),
+    ):
+        candidate = (
+            re.sub(r"\s*\([^)]*\)\s*$", "", getattr(row, field)).strip()
+            if field == "Part_Manuf"
+            else brand_candidate(getattr(row, field))
+        )
+        if candidate:
+            identities.append((candidate, kind))
+
+    domains: list[str] = []
+    for identity, kind in identities:
+        policy = get_controlled_source_policy(identity, kind)
+        if policy is None:
+            continue
+        for domain in policy.approved_domains:
+            if domain not in domains:
+                domains.append(domain)
+    return tuple(domains[:MAX_GOVERNED_DISCOVERY_DOMAINS])
+
+
+def _has_strong_catalogue_query_identity(
+    row: CatalogInputRow,
+    *,
+    manufacturer_reference: ManufacturerReference | None = None,
+    brand_reference: BrandReference | None = None,
+) -> bool:
+    """Avoid generic expansion when a controlled or catalogue brand is usable."""
+    if manufacturer_reference is not None:
+        result = manufacturer_reference.resolve(row.Part_Manuf)
+        if result.status == "resolved":
+            return True
+    if brand_reference is not None:
+        for field in ("E1_Brand", "Unilog_Brand", "DIB_Brand"):
+            candidate = brand_candidate(getattr(row, field))
+            if candidate and brand_reference.resolve(candidate).status == "resolved":
+                return True
+    return any(
+        brand_candidate(getattr(row, field))
+        for field in ("E1_Brand", "Unilog_Brand", "DIB_Brand")
+    )
 
 
 def _normalize_candidate_domain(value: str) -> str | None:

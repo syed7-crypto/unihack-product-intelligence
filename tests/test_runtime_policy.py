@@ -17,6 +17,7 @@ from src.product_intelligence.runtime_policy import (
     _catalogue_identity_candidates,
     _catalogue_identity_hint,
     _identity_matches,
+    _runtime_discovery_queries,
     resolve_identity_and_source_policy,
 )
 from src.product_intelligence.source_discovery import InMemorySourceSearchProvider, SearchResult
@@ -613,7 +614,12 @@ class RuntimePolicyTests(unittest.TestCase):
         self.assertEqual(result.state, "unknown")
         self.assertEqual(
             [query for query, _limit in search.queries],
-            ["576512 Phillips Lighting", "576512 Philips", "576512"],
+            [
+                "576512 Phillips Lighting",
+                "576512 Philips",
+                "576512",
+                "576512 Philips distributor",
+            ],
         )
 
     def test_runtime_queries_include_manufacturer_for_festool(self) -> None:
@@ -629,7 +635,12 @@ class RuntimePolicyTests(unittest.TestCase):
 
         self.assertEqual(
             [query for query, _limit in search.queries],
-            ["578808 Festool USA", "578808"],
+            [
+                "578808 Festool USA",
+                "578808",
+                "578808 manufacturer",
+                "578808 product",
+            ],
         )
 
     def test_runtime_query_falls_back_to_mpn_without_identity(self) -> None:
@@ -643,7 +654,129 @@ class RuntimePolicyTests(unittest.TestCase):
             enrichment_provider=self.provider([]),
         )
 
-        self.assertEqual([query for query, _limit in search.queries], ["NO-IDENTITY"])
+        self.assertEqual(
+            [query for query, _limit in search.queries],
+            ["NO-IDENTITY", "NO-IDENTITY manufacturer", "NO-IDENTITY product"],
+        )
+
+    def test_weak_manufacturer_hint_gets_bounded_search_variants(self) -> None:
+        catalogue = row("3MABR-7100075678", manufacturer="Jam Industrial Supply LLC (JAMIN)")
+        search = InMemorySourceSearchProvider({})
+
+        resolve_identity_and_source_policy(
+            catalogue,
+            search_provider=search,
+            enrichment_provider=self.provider([]),
+        )
+
+        queries = [query for query, _limit in search.queries]
+        self.assertEqual(
+            queries,
+            [
+                "3MABR-7100075678 Jam Industrial Supply LLC",
+                "3MABR-7100075678",
+                "3MABR-7100075678 manufacturer",
+                "3MABR-7100075678 product",
+            ],
+        )
+        self.assertTrue(all("3MABR-7100075678" in query for query in queries))
+
+    def test_strong_brand_hint_does_not_receive_generic_expansion(self) -> None:
+        catalogue = row("ADCB15516BS", manufacturer="Parksite (6151)")
+        catalogue.E1_Brand = "TIMBERTECH"
+        search = InMemorySourceSearchProvider({})
+
+        resolve_identity_and_source_policy(
+            catalogue,
+            search_provider=search,
+            enrichment_provider=self.provider([]),
+        )
+
+        queries = [query for query, _limit in search.queries]
+        self.assertEqual(
+            queries,
+            [
+                "ADCB15516BS Parksite",
+                "ADCB15516BS TIMBERTECH",
+                "ADCB15516BS",
+                "ADCB15516BS TIMBERTECH distributor",
+            ],
+        )
+        self.assertFalse(any(query.endswith(" manufacturer") for query in queries))
+
+    def test_targeted_ecosystem_queries_are_bounded_and_mpn_scoped(self) -> None:
+        timbertech = row("ADCB15516BS", manufacturer="Parksite (6151)")
+        timbertech.E1_Brand = "TIMBERTECH"
+        trex = row("1513724", manufacturer="Boise Cascade Building Materials (BOICA)")
+        trex.E1_Brand = "TREX"
+        united = row("1517603", manufacturer="United Window & Door Manufacturing (UNIWI)")
+        united.E1_Brand = "United Window & Door"
+
+        timbertech_queries = _runtime_discovery_queries(timbertech)
+        trex_queries = _runtime_discovery_queries(trex)
+        united_queries = _runtime_discovery_queries(united)
+
+        self.assertEqual(
+            timbertech_queries,
+            [
+                "ADCB15516BS Parksite",
+                "ADCB15516BS TIMBERTECH",
+                "ADCB15516BS",
+                "ADCB15516BS TIMBERTECH distributor",
+            ],
+        )
+        self.assertEqual(
+            trex_queries,
+            [
+                "1513724 Boise Cascade Building Materials",
+                "1513724 TREX",
+                "1513724",
+                'site:trex.com "1513724"',
+                'site:www.trex.com "1513724"',
+            ],
+        )
+        self.assertEqual(
+            united_queries,
+            [
+                "1517603 United Window & Door Manufacturing",
+                "1517603 United Window & Door",
+                "1517603",
+                "1517603 United Window & Door distributor",
+            ],
+        )
+        for expected_mpn, queries in (
+            ("ADCB15516BS", timbertech_queries),
+            ("1513724", trex_queries),
+            ("1517603", united_queries),
+        ):
+            self.assertLessEqual(len(queries), 7)
+            self.assertEqual(len(queries), len({query.casefold() for query in queries}))
+            self.assertTrue(all(expected_mpn in query for query in queries))
+
+    def test_site_queries_require_controlled_domain_mapping(self) -> None:
+        unknown = row("UNKNOWN-1", manufacturer="Not A Controlled Company")
+        unknown.E1_Brand = "Not A Controlled Brand"
+        queries = _runtime_discovery_queries(unknown)
+
+        self.assertFalse(any(query.startswith("site:") for query in queries))
+        self.assertTrue(all("UNKNOWN-1" in query for query in queries))
+
+    def test_query_variants_are_deduplicated(self) -> None:
+        catalogue = row("DUP-1", manufacturer="Acme")
+        catalogue.E1_Brand = "Acme"
+        search = InMemorySourceSearchProvider({})
+
+        resolve_identity_and_source_policy(
+            catalogue,
+            search_provider=search,
+            enrichment_provider=self.provider([]),
+        )
+
+        queries = [query for query, _limit in search.queries]
+        self.assertEqual(
+            queries,
+            ["DUP-1 Acme", "DUP-1", "DUP-1 Acme distributor"],
+        )
 
     def test_runtime_ranking_skips_conflicting_candidate_before_domain_fetch(self) -> None:
         catalogue = row("COLLISION-2")
@@ -701,7 +834,11 @@ class RuntimePolicyTests(unittest.TestCase):
 
         self.assertEqual(
             [query for query, _limit in search.queries],
-            ["DUPLICATE-1 Philips", "DUPLICATE-1"],
+            [
+                "DUPLICATE-1 Philips",
+                "DUPLICATE-1",
+                "DUPLICATE-1 philips distributor",
+            ],
         )
 
     def test_completed_search_without_trustworthy_source_is_not_retrieval_failure(self) -> None:

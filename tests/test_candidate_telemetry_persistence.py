@@ -99,6 +99,10 @@ class CandidateTelemetryPersistenceTests(unittest.TestCase):
         self.assertEqual(len(result.candidate_telemetry), 1)
         self.assertEqual(result.candidate_telemetry[0].mfg_part_num, "MPN-1")
         self.assertEqual(result.candidate_telemetry[0].telemetry.url, url)
+        self.assertEqual(
+            result.candidate_telemetry[0].telemetry.query,
+            'site:approved.example "MPN-1"',
+        )
         self.assertEqual(result.row_results[0].candidate_telemetry[0].url, url)
 
     def test_successful_and_rejected_candidates_are_serialized(self) -> None:
@@ -132,6 +136,7 @@ class CandidateTelemetryPersistenceTests(unittest.TestCase):
 
         rows = build_candidate_telemetry_rows(result)
         self.assertEqual(rows[0]["decision"], "strong")
+        self.assertEqual(rows[0]["query"], "")
         self.assertEqual(rows[0]["exact_mpn"], True)
         self.assertEqual(rows[1]["rejection_code"], "RETAILER_DOMAIN_REJECTED")
         self.assertEqual(rows[1]["fetched"], False)
