@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import csv
 import io
-import os
 import tempfile
 import time
 from pathlib import Path
@@ -19,6 +18,9 @@ from .source_discovery import SerperSearchProvider
 
 
 PAGE_NAMES = ("Run", "Results", "Review", "Delivery")
+CANONICAL_DELIVERY_SCHEMA_PATH = (
+    Path(__file__).resolve().parents[2] / "data" / "unihack_delivery_schema.csv"
+)
 
 
 def main() -> None:
@@ -76,7 +78,9 @@ def _render_run_page() -> None:
 
     with right:
         st.subheader("Run configuration")
-        schema_file, schema_path = _schema_input()
+        st.markdown("**Output schema**")
+        st.caption("UniHack Required Schema · 252 columns")
+        st.success("✓ Schema locked")
         discovery_enabled = st.toggle(
             "Enable governed source discovery",
             value=True,
@@ -90,13 +94,6 @@ def _render_run_page() -> None:
             "The run uses the real catalogue batch API. No enrichment results are fabricated in the UI.",
         )
         return
-    if schema_file is None and schema_path is None:
-        st.warning(
-            "The official 252-column delivery header is not available. Upload the expected-output CSV "
-            "or configure UNIHACK_DELIVERY_SCHEMA_PATH before running."
-        )
-        return
-
     st.divider()
     action_col, state_col = st.columns((1, 1.8), gap="large")
     with action_col:
@@ -113,7 +110,7 @@ def _render_run_page() -> None:
 
     if run_clicked:
         started = time.perf_counter()
-        batch = _run_catalogue(catalogue_file, schema_file, schema_path, discovery_enabled)
+        batch = _run_catalogue(catalogue_file, discovery_enabled)
         st.session_state["catalogue_run_duration"] = time.perf_counter() - started
         if batch is not None:
             st.session_state["catalogue_batch_result"] = batch
@@ -181,21 +178,6 @@ def _render_run_metrics(batch: BatchResult) -> None:
         column.metric(label, value)
 
 
-def _schema_input() -> tuple[Any | None, Path | None]:
-    """Use an uploaded schema or a configured local schema path."""
-    uploaded = st.file_uploader(
-        "Delivery schema CSV",
-        type=["csv"],
-        help="Only the header is used to enforce the official 252-column output shape.",
-        key="delivery_schema_upload",
-    )
-    configured = os.getenv("UNIHACK_DELIVERY_SCHEMA_PATH", "").strip()
-    if configured and Path(configured).exists():
-        st.caption(f"Using configured schema: {Path(configured).name}")
-        return uploaded, Path(configured)
-    return uploaded, None
-
-
 def _preview_catalogue(uploaded: Any) -> list[CatalogInputRow]:
     try:
         with tempfile.NamedTemporaryFile(suffix=".csv", delete=False) as handle:
@@ -218,8 +200,6 @@ def _preview_catalogue(uploaded: Any) -> list[CatalogInputRow]:
 
 def _run_catalogue(
     catalogue_file: Any,
-    schema_file: Any | None,
-    schema_path: Path | None,
     discovery_enabled: bool,
 ) -> BatchResult | None:
     started = time.perf_counter()
@@ -255,20 +235,12 @@ def _run_catalogue(
         )
 
     try:
-        update_progress("Preparing inputs", "Reading catalogue and delivery schema")
+        update_progress("Preparing inputs", "Reading catalogue and canonical delivery schema")
         with tempfile.TemporaryDirectory(prefix="unihack_catalogue_") as directory:
             root = Path(directory)
             catalogue_path = root / Path(catalogue_file.name).name
             catalogue_path.write_bytes(catalogue_file.getvalue())
-
-            if schema_file is not None:
-                local_schema_path = root / "delivery_schema.csv"
-                local_schema_path.write_bytes(schema_file.getvalue())
-                schema = load_delivery_schema(local_schema_path)
-            elif schema_path is not None:
-                schema = load_delivery_schema(schema_path)
-            else:
-                raise ValueError("An official delivery schema is required.")
+            schema = load_delivery_schema(CANONICAL_DELIVERY_SCHEMA_PATH)
 
             completed.append("Inputs")
             update_progress(

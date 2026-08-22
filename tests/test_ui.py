@@ -14,7 +14,12 @@ from src.product_intelligence.product_identification import (
     AttributeDefinition,
     ProductIdentificationResult,
 )
-from src.product_intelligence.ui import build_attribute_rows, build_conflict_rows
+from src.product_intelligence.delivery_schema import load_delivery_schema
+from src.product_intelligence.ui import (
+    CANONICAL_DELIVERY_SCHEMA_PATH,
+    build_attribute_rows,
+    build_conflict_rows,
+)
 
 
 def sample_result() -> ProductIntelligenceResult:
@@ -88,6 +93,13 @@ def sample_result() -> ProductIntelligenceResult:
 
 
 class UiFormattingTests(unittest.TestCase):
+    def test_ui_uses_locked_canonical_252_column_schema(self) -> None:
+        schema = load_delivery_schema(CANONICAL_DELIVERY_SCHEMA_PATH)
+
+        self.assertEqual(len(schema.columns), 252)
+        self.assertEqual(schema.columns[0], "MFR URL")
+        self.assertEqual(schema.columns[-1], "Actual Image (Yes/No)")
+
     def test_attribute_rows_make_conflicts_and_missing_values_visible(self) -> None:
         rows = build_attribute_rows(sample_result())
 
