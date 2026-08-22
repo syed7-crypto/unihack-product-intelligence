@@ -8,6 +8,7 @@ invent missing reference data.
 from __future__ import annotations
 
 import re
+from contextlib import nullcontext
 from collections.abc import Sequence
 from typing import Literal
 
@@ -43,6 +44,7 @@ from .reference_data import (
     UOMReference,
     normalize_reference_value,
 )
+from .runtime_timing import RuntimeTimingAccumulator
 from .review import ReviewReport, build_review_report
 from .runtime_policy import (
     CandidateTelemetry,
@@ -132,6 +134,8 @@ def enrich_catalogue_row(
     verified_sources: Sequence[ManufacturerSource] | None = None,
     initial_source_diagnostics: Sequence[EnrichmentSourceDiagnostic] = (),
     runtime_identity: IdentityResolutionResult | None = None,
+    runtime_timing: RuntimeTimingAccumulator | None = None,
+    attribute_extraction_concurrency: int = 1,
 ) -> CatalogueEnrichmentResult:
     """Enrich one row using only explicit, exact-MPN-verified sources.
 
@@ -142,7 +146,12 @@ def enrich_catalogue_row(
     if not source_urls and verified_sources is None:
         raise CatalogueEnrichmentError("At least one explicit source URL is required.")
 
-    provider = provider or ManufacturerEnrichmentProvider()
+    provider = provider or ManufacturerEnrichmentProvider(runtime_timing=runtime_timing)
+    if (
+        runtime_timing is not None
+        and isinstance(provider, ManufacturerEnrichmentProvider)
+    ):
+        provider = provider.with_runtime_timing(runtime_timing)
     mappings = attribute_mappings or AttributeDeliveryMappings()
     delivery_row = map_raw_fields_to_delivery(catalogue_row, delivery_schema)
     reference_resolution = _resolve_references(
@@ -364,15 +373,21 @@ def enrich_catalogue_row(
         )
         _map_resolved_identity(delivery_row, reference_resolution)
 
-    _map_verified_source_metadata(delivery_row, diagnostics, catalogue_row)
-    for content in verified_source_contents:
-        map_verified_source_content_to_delivery(
-            delivery_row,
-            content,
-            delivery_schema,
-            uom_reference=uom_reference,
-            provenance=delivery_evidence,
-        )
+    mapping_context = (
+        runtime_timing.measure("validation_delivery_mapping_duration_seconds")
+        if runtime_timing is not None
+        else nullcontext()
+    )
+    with mapping_context:
+        _map_verified_source_metadata(delivery_row, diagnostics, catalogue_row)
+        for content in verified_source_contents:
+            map_verified_source_content_to_delivery(
+                delivery_row,
+                content,
+                delivery_schema,
+                uom_reference=uom_reference,
+                provenance=delivery_evidence,
+            )
 
     if not normalized_sources:
         return _finish_result(
@@ -388,7 +403,12 @@ def enrich_catalogue_row(
         )
 
     try:
-        pipeline_result = run_pipeline(normalized_sources, client=client)
+        pipeline_result = run_pipeline(
+            normalized_sources,
+            client=client,
+            runtime_timing=runtime_timing,
+            attribute_extraction_concurrency=attribute_extraction_concurrency,
+        )
     except ProductIntelligencePipelineError as error:
         inner_diagnostics = "; ".join(
             f"{diagnostic.code}: {diagnostic.message}"
@@ -437,13 +457,19 @@ def enrich_catalogue_row(
             delivery_evidence,
         )
 
-    mapping_diagnostics = _map_validated_attributes(
-        delivery_row,
-        pipeline_result,
-        mappings,
-        attribute_reference,
-        uom_reference,
+    mapping_context = (
+        runtime_timing.measure("validation_delivery_mapping_duration_seconds")
+        if runtime_timing is not None
+        else nullcontext()
     )
+    with mapping_context:
+        mapping_diagnostics = _map_validated_attributes(
+            delivery_row,
+            pipeline_result,
+            mappings,
+            attribute_reference,
+            uom_reference,
+        )
     return _finish_result(
         catalogue_row,
         delivery_row,

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 from collections.abc import Mapping
 from html.parser import HTMLParser
@@ -100,6 +101,8 @@ class _ProductContentParser(HTMLParser):
         self.document_urls: list[str] = []
         self.video_urls: list[str] = []
         self.visible_text: list[str] = []
+        self.jsonld_payloads: list[str] = []
+        self.structured_meta: list[tuple[str, str]] = []
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         attributes = {key.casefold(): value or "" for key, value in attrs}
@@ -109,12 +112,28 @@ class _ProductContentParser(HTMLParser):
         ).casefold()
         parent_context = self.stack[-1].context if self.stack else None
         context = _context_for(tag, tokens, parent_context)
+        if tag.casefold() == "script" and attributes.get("type", "").casefold() == "application/ld+json":
+            context = "jsonld"
         element_url = urljoin(self.base_url, attributes.get("href", "")) if tag.casefold() == "a" and attributes.get("href") else None
         self.stack.append(_Element(tag.casefold(), context, element_url))
 
         if tag.casefold() == "meta":
             content = attributes.get("content", "").strip()
             if content:
+                structured_key = next(
+                    (
+                        value.casefold()
+                        for value in (
+                            attributes.get("itemprop", ""),
+                            attributes.get("name", ""),
+                            attributes.get("property", ""),
+                        )
+                        if _is_structured_product_key(value)
+                    ),
+                    None,
+                )
+                if structured_key is not None:
+                    self.structured_meta.append((structured_key, content))
                 if "description" in tokens and self.description is None:
                     self.description = content
                 elif "og:title" in tokens and self.page_title is None:
@@ -138,6 +157,14 @@ class _ProductContentParser(HTMLParser):
             return
         element = self.stack[index]
         text = element.text
+        if (
+            tag == "script"
+            and element.context == "jsonld"
+            and text
+            and len(self.jsonld_payloads) < _MAX_JSONLD_PAYLOADS
+            and len(text) <= _MAX_JSONLD_CHARS
+        ):
+            self.jsonld_payloads.append(text)
         if text:
             if tag == "title" and self.page_title is None:
                 self.page_title = text
@@ -220,7 +247,18 @@ def extract_verified_source_content(
     parser = _ProductContentParser(source.url)
     parser.feed(payload)
     parser.close()
-    structured = _extract_structured_data("\n".join(parser.visible_text + parser.specification_text))
+    visible_structured = _extract_structured_data(
+        "\n".join(parser.visible_text + parser.specification_text)
+    )
+    structured_metadata = _extract_structured_metadata(
+        parser.jsonld_payloads,
+        parser.structured_meta,
+    )
+    structured = _merge_structured_data(visible_structured, structured_metadata)
+    if parser.manufacturer_brand_text is None:
+        parser.manufacturer_brand_text = structured_metadata.get("brand")
+    if parser.mpn_model_text is None:
+        parser.mpn_model_text = structured_metadata.get("mpn") or structured_metadata.get("sku")
     return VerifiedSourceContent(
         canonical_url=source.url,
         source_type="web",
@@ -279,6 +317,165 @@ def _extract_structured_data(text: str) -> StructuredProductData:
         text, "standard packaging information|packaging information|packaging"
     )
     return StructuredProductData(**values)
+
+
+_MAX_JSONLD_PAYLOADS = 8
+_MAX_JSONLD_CHARS = 100_000
+_STRUCTURED_PRODUCT_KEYS = frozenset(
+    {
+        "brand",
+        "ean",
+        "gtin",
+        "gtin8",
+        "gtin12",
+        "gtin13",
+        "gtin14",
+        "height",
+        "length",
+        "mpn",
+        "packaging",
+        "packaginginformation",
+        "packagequantity",
+        "quantity",
+        "sellingquantity",
+        "sellinguom",
+        "sku",
+        "unspsc",
+        "volume",
+        "warranty",
+        "weight",
+        "width",
+    }
+)
+
+
+def _extract_structured_metadata(
+    jsonld_payloads: list[str],
+    structured_meta: list[tuple[str, str]],
+) -> dict[str, str]:
+    """Extract bounded, explicitly keyed product metadata from page-local data."""
+    values: dict[str, str] = {}
+    for key, raw_value in structured_meta:
+        _add_structured_value(values, key, raw_value)
+
+    parsed_count = 0
+    for payload in jsonld_payloads[:_MAX_JSONLD_PAYLOADS]:
+        if parsed_count >= _MAX_JSONLD_PAYLOADS or len(payload) > _MAX_JSONLD_CHARS:
+            continue
+        try:
+            parsed = json.loads(payload)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            continue
+        parsed_count += 1
+        _walk_structured_metadata(parsed, values)
+    return values
+
+
+def _walk_structured_metadata(value: object, output: dict[str, str]) -> None:
+    if isinstance(value, dict):
+        for key, child in value.items():
+            compact_key = _compact_structured_key(str(key))
+            if compact_key == "brand" and isinstance(child, dict):
+                name = child.get("name")
+                if isinstance(name, str) and name.strip():
+                    output.setdefault("brand", " ".join(name.split()))
+            if _is_structured_product_key(str(key)):
+                _add_structured_value(output, str(key), child)
+            if isinstance(child, (dict, list)):
+                _walk_structured_metadata(child, output)
+    elif isinstance(value, list):
+        for child in value:
+            _walk_structured_metadata(child, output)
+
+
+def _add_structured_value(output: dict[str, str], key: str, value: object) -> None:
+    normalized_key = _compact_structured_key(key)
+    if normalized_key not in _STRUCTURED_PRODUCT_KEYS:
+        return
+    if isinstance(value, dict):
+        raw_value = value.get("value", value.get("@value"))
+        unit = value.get("unitText", value.get("unitCode"))
+        if raw_value is not None:
+            output.setdefault(normalized_key, str(raw_value).strip())
+        if unit is not None and raw_value is not None:
+            output.setdefault(f"{normalized_key}_uom", str(unit).strip())
+        return
+    if isinstance(value, (str, int, float)) and not isinstance(value, bool):
+        text = " ".join(str(value).split())
+        if text:
+            quantity = _split_structured_quantity(text)
+            if quantity is not None and normalized_key in {
+                "height", "length", "width", "weight", "volume", "quantity",
+                "packagequantity", "sellingquantity",
+            }:
+                output.setdefault(normalized_key, quantity[0])
+                output.setdefault(f"{normalized_key}_uom", quantity[1])
+            else:
+                output.setdefault(normalized_key, text)
+
+
+def _split_structured_quantity(value: str) -> tuple[str, str] | None:
+    match = re.fullmatch(
+        r"\s*([-+]?\d+(?:\.\d+)?)\s*([a-zA-Z]+)\s*",
+        value,
+    )
+    return (match.group(1), match.group(2)) if match else None
+
+
+def _merge_structured_data(
+    primary: StructuredProductData,
+    metadata: dict[str, str],
+) -> StructuredProductData:
+    """Use metadata only for fields absent from stronger visible evidence."""
+    values = primary.model_dump()
+    identifier_aliases = {
+        "gtin8": "gtin",
+        "gtin12": "gtin",
+        "gtin13": "gtin",
+        "gtin14": "gtin",
+    }
+    for key, value in metadata.items():
+        if key.startswith("_") or key.endswith("_uom"):
+            continue
+        target = identifier_aliases.get(key, key)
+        if target in values and values[target] is None:
+            values[target] = value
+        if key in {"gtin12"} and values.get("upc") is None:
+            values["upc"] = value
+        if key in {"gtin13"} and values.get("ean") is None:
+            values["ean"] = value
+    for dimension in (
+        "length", "height", "width", "weight", "volume",
+        "sellingquantity", "packagequantity",
+    ):
+        target = "selling_qty" if dimension == "sellingquantity" else dimension
+        if dimension == "packagequantity":
+            target = "selling_qty"
+        source_uom = f"{dimension}_uom"
+        target_uom = "selling_uom" if dimension == "sellingquantity" else f"{dimension}_uom"
+        if dimension == "packagequantity":
+            target_uom = "selling_uom"
+        if values.get(target) is None and metadata.get(dimension):
+            values[target] = metadata[dimension]
+        if values.get(target_uom) is None and metadata.get(source_uom):
+            values[target_uom] = metadata[source_uom]
+    for key, target in (
+        ("warranty", "warranty"),
+        ("packaging", "packaging_information"),
+        ("packaginginformation", "packaging_information"),
+        ("sellinguom", "selling_uom"),
+    ):
+        if values.get(target) is None and metadata.get(key):
+            values[target] = metadata[key]
+    return StructuredProductData(**values)
+
+
+def _compact_structured_key(value: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", value.casefold().split(":")[-1])
+
+
+def _is_structured_product_key(value: str) -> bool:
+    return _compact_structured_key(value) in _STRUCTURED_PRODUCT_KEYS
 
 
 def _labelled_text(text: str, labels: str) -> str | None:

@@ -370,6 +370,18 @@ def _render_delivery_page() -> None:
         )
     else:
         st.info("No delivery rows are available yet.")
+    st.download_button(
+        "Download runtime diagnostics CSV",
+        data=runtime_diagnostics_csv_bytes(batch),
+        file_name="runtime_diagnostics.csv",
+        mime="text/csv",
+    )
+    st.download_button(
+        "Download search diagnostics CSV",
+        data=search_diagnostics_csv_bytes(batch),
+        file_name="search_diagnostics.csv",
+        mime="text/csv",
+    )
 
 
 def _render_product_detail(result: Any) -> None:
@@ -587,6 +599,37 @@ def candidate_telemetry_csv_bytes(batch: BatchResult) -> bytes:
     writer = csv.DictWriter(output, fieldnames=fieldnames)
     writer.writeheader()
     writer.writerows(build_candidate_telemetry_rows(batch))
+    return output.getvalue().encode("utf-8")
+
+
+def runtime_diagnostics_csv_bytes(batch: BatchResult) -> bytes:
+    """Serialize aggregate runtime timing without provider/request details."""
+    output = io.StringIO(newline="")
+    writer = csv.DictWriter(output, fieldnames=["metric", "value"])
+    writer.writeheader()
+    for metric, value in batch.runtime_timing.model_dump().items():
+        writer.writerow({"metric": metric, "value": value})
+    return output.getvalue().encode("utf-8")
+
+
+def search_diagnostics_csv_bytes(batch: BatchResult) -> bytes:
+    """Serialize bounded per-search diagnostics without provider payloads."""
+    fieldnames = [
+        "MPN", "query", "query_kind", "duration_seconds", "result_count",
+        "error_category",
+    ]
+    output = io.StringIO(newline="")
+    writer = csv.DictWriter(output, fieldnames=fieldnames)
+    writer.writeheader()
+    for record in batch.search_telemetry:
+        writer.writerow({
+            "MPN": record.mpn,
+            "query": record.query,
+            "query_kind": record.query_kind,
+            "duration_seconds": record.duration_seconds,
+            "result_count": record.result_count,
+            "error_category": record.error_category or "",
+        })
     return output.getvalue().encode("utf-8")
 
 

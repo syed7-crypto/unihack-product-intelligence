@@ -26,6 +26,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from .extraction import ExtractionError, NormalizedSource, SourceLocation, extract_pdf
 from .mpn_normalization import normalize_mpn
+from .runtime_timing import RuntimeTimingAccumulator
 
 
 ManufacturerSourceType = Literal["web", "pdf"]
@@ -102,6 +103,7 @@ class ManufacturerEnrichmentProvider:
         approved_domains: set[str] | frozenset[str] | None = None,
         timeout: float = 20.0,
         fetcher: SourceFetcher | None = None,
+        runtime_timing: RuntimeTimingAccumulator | None = None,
     ) -> None:
         self.approved_domains = frozenset(
             domain.casefold().rstrip(".")
@@ -109,6 +111,7 @@ class ManufacturerEnrichmentProvider:
         )
         self.timeout = timeout
         self._fetcher = fetcher or _fetch_url
+        self._runtime_timing = runtime_timing
 
     def with_approved_domains(
         self,
@@ -124,9 +127,46 @@ class ManufacturerEnrichmentProvider:
             approved_domains=approved_domains,
             timeout=self.timeout,
             fetcher=self._fetcher,
+            runtime_timing=self._runtime_timing,
+        )
+
+    def with_runtime_timing(
+        self, runtime_timing: RuntimeTimingAccumulator | None
+    ) -> "ManufacturerEnrichmentProvider":
+        """Return the same provider with optional diagnostic timing attached."""
+        return ManufacturerEnrichmentProvider(
+            approved_domains=self.approved_domains,
+            timeout=self.timeout,
+            fetcher=self._fetcher,
+            runtime_timing=runtime_timing,
         )
 
     def retrieve_source(
+        self,
+        url: str,
+        expected_mpn: str,
+        *,
+        expected_identity: str | None = None,
+        expected_description: str | None = None,
+    ) -> RetrievalResult:
+        if self._runtime_timing is None:
+            return self._retrieve_source(
+                url,
+                expected_mpn,
+                expected_identity=expected_identity,
+                expected_description=expected_description,
+            )
+        with self._runtime_timing.measure(
+            "source_retrieval_duration_seconds", "source_retrieval_calls"
+        ):
+            return self._retrieve_source(
+                url,
+                expected_mpn,
+                expected_identity=expected_identity,
+                expected_description=expected_description,
+            )
+
+    def _retrieve_source(
         self,
         url: str,
         expected_mpn: str,

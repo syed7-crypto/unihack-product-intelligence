@@ -29,6 +29,7 @@ from .reference_data import (
 from .review import ReviewIssue, ReviewReport
 from .source_discovery import (
     ManufacturerSourcePolicy,
+    SearchProviderError,
     SerperSearchProvider,
     SourceSearchProvider,
     discover_and_verify_sources,
@@ -41,6 +42,11 @@ from .runtime_policy import (
     RuntimeAuthorityVerifier,
     RuntimeSiteIdentityVerifier,
     resolve_identity_and_source_policy,
+)
+from .runtime_timing import (
+    RuntimeTimingAccumulator,
+    RuntimeTimingSummary,
+    SearchTimingRecord,
 )
 
 
@@ -87,6 +93,68 @@ class BatchResult(BaseModel):
     evaluation_diagnostics: list[BatchEvaluationDiagnostic] = Field(default_factory=list)
     row_results: list[CatalogueEnrichmentResult] = Field(default_factory=list)
     candidate_telemetry: list[BatchCandidateTelemetry] = Field(default_factory=list)
+    runtime_timing: RuntimeTimingSummary = Field(default_factory=RuntimeTimingSummary)
+    search_telemetry: list[SearchTimingRecord] = Field(default_factory=list)
+
+
+class _TimedSearchProvider:
+    """Delegate search unchanged while recording aggregate call timing."""
+
+    def __init__(
+        self,
+        inner: SourceSearchProvider,
+        timing: RuntimeTimingAccumulator,
+        mpn: str = "",
+    ) -> None:
+        self._inner = inner
+        self._timing = timing
+        self._mpn = mpn
+
+    def for_mpn(self, mpn: str) -> "_TimedSearchProvider":
+        return _TimedSearchProvider(self._inner, self._timing, mpn)
+
+    def search(self, query: str, max_results: int):
+        query_kind = (
+            "domain_constrained"
+            if query.lstrip().casefold().startswith("site:")
+            else "initial"
+        )
+        started = self._timing.now()
+        try:
+            results = self._inner.search(query, max_results)
+        except Exception as error:
+            self._timing.record_search(
+                mpn=self._mpn,
+                query=query,
+                query_kind=query_kind,
+                duration_seconds=self._timing.now() - started,
+                result_count=0,
+                error_category=_safe_search_error_category(error),
+            )
+            raise
+        self._timing.record_search(
+            mpn=self._mpn,
+            query=query,
+            query_kind=query_kind,
+            duration_seconds=self._timing.now() - started,
+            result_count=len(results),
+        )
+        return results
+
+
+def _safe_search_error_category(error: Exception) -> str:
+    allowed = {
+        "invalid_configuration", "missing_api_key", "invalid_query", "invalid_limit",
+        "rate_limited", "http_error", "provider_unavailable", "malformed_response",
+    }
+    code = getattr(error, "code", None)
+    if isinstance(error, SearchProviderError) and code in allowed:
+        return code
+    if isinstance(error, TimeoutError):
+        return "timeout"
+    if isinstance(error, OSError):
+        return "connection_error"
+    return "unknown_error"
 
 
 def run_catalogue_batch(
@@ -114,6 +182,9 @@ def run_catalogue_batch(
     runtime_site_identity_verifier: RuntimeSiteIdentityVerifier | None = None,
     runtime_max_candidate_domains: int = 3,
     runtime_max_domain_searches: int = 3,
+    runtime_timing: RuntimeTimingAccumulator | None = None,
+    search_concurrency: int = 3,
+    attribute_extraction_concurrency: int = 1,
 ) -> BatchResult:
     """Process catalogue rows in input order using the existing row workflow.
 
@@ -124,6 +195,17 @@ def run_catalogue_batch(
     exact-MPN-verified sources are passed onward.
     """
     rows = load_catalog_rows(rows_or_csv) if isinstance(rows_or_csv, (str, Path)) else list(rows_or_csv)
+    timing = runtime_timing or RuntimeTimingAccumulator()
+    batch_started = timing.now()
+    timed_search_provider = (
+        _TimedSearchProvider(search_provider, timing)
+        if search_provider is not None else None
+    )
+    effective_provider = (
+        provider.with_runtime_timing(timing)
+        if isinstance(provider, ManufacturerEnrichmentProvider)
+        else provider
+    )
     enrich = row_enricher or enrich_catalogue_row
     row_results: list[CatalogueEnrichmentResult] = []
     delivery_rows: list[dict[str, str]] = []
@@ -133,14 +215,19 @@ def run_catalogue_batch(
 
     for row_index, row in enumerate(rows):
         row_candidate_telemetry: list[CandidateTelemetry] = []
+        row_search_provider = (
+            timed_search_provider.for_mpn(row.Mfg_Part_Num)
+            if timed_search_provider is not None
+            else None
+        )
         try:
             urls = _resolve_source_urls(source_urls, row)
             expected = _resolve_expected_row(expected_delivery_rows, row)
             if discovery_enabled and not urls:
                 discovery = _discover_for_row(
                     row,
-                    search_provider=search_provider,
-                    enrichment_provider=provider,
+                    search_provider=row_search_provider,
+                    enrichment_provider=effective_provider,
                     policy_resolver=discovery_policy_resolver,
                     manufacturer_reference=manufacturer_reference,
                     brand_reference=brand_reference,
@@ -151,6 +238,8 @@ def run_catalogue_batch(
                     runtime_site_identity_verifier=runtime_site_identity_verifier,
                     runtime_max_candidate_domains=runtime_max_candidate_domains,
                     runtime_max_domain_searches=runtime_max_domain_searches,
+                    runtime_timing=timing,
+                    search_concurrency=search_concurrency,
                 )
                 if discovery.runtime_identity is not None:
                     row_candidate_telemetry = list(
@@ -161,7 +250,7 @@ def run_catalogue_batch(
                     [],
                     delivery_schema,
                     client=client,
-                    provider=provider,
+                    provider=effective_provider,
                     manufacturer_reference=manufacturer_reference,
                     brand_reference=brand_reference,
                     brand_manufacturer_reference=brand_manufacturer_reference,
@@ -172,6 +261,8 @@ def run_catalogue_batch(
                     verified_sources=discovery.verified_sources,
                     initial_source_diagnostics=discovery.diagnostics,
                     runtime_identity=discovery.runtime_identity,
+                    runtime_timing=timing,
+                    attribute_extraction_concurrency=attribute_extraction_concurrency,
                 )
             else:
                 result = enrich(
@@ -179,7 +270,7 @@ def run_catalogue_batch(
                     urls,
                     delivery_schema,
                     client=client,
-                    provider=provider,
+                    provider=effective_provider,
                     manufacturer_reference=manufacturer_reference,
                     brand_reference=brand_reference,
                     brand_manufacturer_reference=brand_manufacturer_reference,
@@ -187,6 +278,8 @@ def run_catalogue_batch(
                     uom_reference=uom_reference,
                     attribute_mappings=attribute_mappings,
                     expected_delivery_row=dict(expected) if expected is not None else None,
+                    runtime_timing=timing,
+                    attribute_extraction_concurrency=attribute_extraction_concurrency,
                 )
         except (CatalogueEnrichmentError, RuntimeError, ValueError, OSError) as error:
             result = _failed_result(row, delivery_schema, error)
@@ -214,6 +307,7 @@ def run_catalogue_batch(
                 )
             )
 
+    timing.set_total(timing.now() - batch_started)
     counts = {status: sum(result.review.status == status for result in row_results) for status in (
         "ready", "needs_review", "blocked", "failed"
     )}
@@ -229,6 +323,8 @@ def run_catalogue_batch(
         evaluation_diagnostics=evaluation_diagnostics,
         row_results=row_results,
         candidate_telemetry=candidate_telemetry,
+        runtime_timing=timing.snapshot(),
+        search_telemetry=timing.search_snapshot(),
     )
 
 
@@ -259,6 +355,8 @@ def _discover_for_row(
     runtime_site_identity_verifier: RuntimeSiteIdentityVerifier | None,
     runtime_max_candidate_domains: int,
     runtime_max_domain_searches: int,
+    runtime_timing: RuntimeTimingAccumulator | None = None,
+    search_concurrency: int = 3,
 ) -> _DiscoveryOutcome:
     """Run one governed discovery step and convert diagnostics for enrichment."""
     policy = (
@@ -275,7 +373,7 @@ def _discover_for_row(
             runtime = resolve_identity_and_source_policy(
                 row,
                 search_provider=search_provider,
-                enrichment_provider=enrichment_provider or ManufacturerEnrichmentProvider(),
+                enrichment_provider=enrichment_provider or ManufacturerEnrichmentProvider(runtime_timing=runtime_timing),
                 manufacturer_reference=manufacturer_reference,
                 brand_reference=brand_reference,
                 authority_verifier=runtime_authority_verifier,
@@ -284,6 +382,8 @@ def _discover_for_row(
                 site_identity_verifier=runtime_site_identity_verifier,
                 max_candidate_domains=runtime_max_candidate_domains,
                 max_domain_searches=runtime_max_domain_searches,
+                runtime_timing=runtime_timing,
+                search_concurrency=search_concurrency,
             )
             return _runtime_outcome(runtime)
         return _DiscoveryOutcome(
@@ -296,7 +396,7 @@ def _discover_for_row(
             ]
         )
 
-    provider = enrichment_provider or ManufacturerEnrichmentProvider()
+    provider = enrichment_provider or ManufacturerEnrichmentProvider(runtime_timing=runtime_timing)
     search = search_provider or SerperSearchProvider.from_environment()
     try:
         verification = discover_and_verify_sources(
@@ -305,6 +405,7 @@ def _discover_for_row(
             search,
             provider,
             max_results_per_query=max_results_per_query,
+            search_concurrency=search_concurrency,
         )
     except Exception as error:
         return _DiscoveryOutcome(

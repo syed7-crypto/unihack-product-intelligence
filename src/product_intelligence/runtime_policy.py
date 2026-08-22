@@ -24,6 +24,8 @@ from .reference_data import (
     ManufacturerReference,
     normalize_reference_value,
 )
+from .runtime_timing import RuntimeTimingAccumulator
+from .search_parallel import search_in_order
 from .source_discovery import SearchResult, SourceSearchProvider
 
 
@@ -144,6 +146,8 @@ def resolve_identity_and_source_policy(
     max_candidate_domains: int = 3,
     max_domain_searches: int = 3,
     max_source_attempts: int = 3,
+    runtime_timing: RuntimeTimingAccumulator | None = None,
+    search_concurrency: int = 3,
 ) -> IdentityResolutionResult:
     """Resolve known identities or safely attempt one ephemeral runtime policy.
 
@@ -184,6 +188,8 @@ def resolve_identity_and_source_policy(
 
     if max_candidate_domains < 1 or max_domain_searches < 1 or max_source_attempts < 1:
         raise ValueError("Runtime candidate/search limits must be positive.")
+    if search_concurrency < 1:
+        raise ValueError("search concurrency must be positive.")
 
     # Preserve the original injected-verifier contract as a strict compatibility
     # path. The product-first path below verifies identity after retrieving the
@@ -207,18 +213,25 @@ def resolve_identity_and_source_policy(
         else:
             search_results: list[tuple[SearchResult, str]] = []
             search_errors: list[str] = []
-            for query in _runtime_discovery_queries(
+            queries = _runtime_discovery_queries(
                 row,
                 manufacturer_reference=manufacturer_reference,
                 brand_reference=brand_reference,
-            ):
-                try:
-                    search_results.extend(
-                        (result, query)
-                        for result in search_provider.search(query, max_results)
-                    )
-                except Exception as error:
+            )
+            outcomes = search_in_order(
+                search_provider,
+                queries,
+                max_results,
+                concurrency=search_concurrency,
+            )
+            for query, outcome in zip(queries, outcomes):
+                if outcome.error is not None:
+                    error = outcome.error
                     search_errors.append(f"Search failed for query '{query}': {error}")
+                    continue
+                search_results.extend(
+                    (result, query) for result in outcome.results
+                )
             diagnostics.extend(search_errors)
             if not search_results and search_errors:
                 raise RuntimeError(search_errors[-1])
@@ -258,6 +271,7 @@ def resolve_identity_and_source_policy(
     attempted_sources = 0
     candidate_telemetry: list[CandidateTelemetry] = []
     domain_queues: list[tuple[RuntimeDomainCandidate, str, list[str], str]] = []
+    pending_domain_searches: list[tuple[RuntimeDomainCandidate, str, str]] = []
     for domain_candidate in domain_candidates:
         domain = _normalize_candidate_domain(domain_candidate.domain)
         if domain is None:
@@ -303,9 +317,19 @@ def resolve_identity_and_source_policy(
             )
             continue
         domain_query = f'site:{domain} "{row.Mfg_Part_Num.strip()}"'
-        try:
-            domain_results = search_provider.search(domain_query, max_domain_searches)
-        except Exception as error:
+        pending_domain_searches.append((domain_candidate, domain, domain_query))
+
+    domain_outcomes = search_in_order(
+        search_provider,
+        [item[2] for item in pending_domain_searches],
+        max_domain_searches,
+        concurrency=search_concurrency,
+    )
+    for (domain_candidate, domain, domain_query), outcome in zip(
+        pending_domain_searches, domain_outcomes
+    ):
+        if outcome.error is not None:
+            error = outcome.error
             retrieval_failure_seen = True
             candidate_telemetry.append(
                 CandidateTelemetry(
@@ -320,7 +344,7 @@ def resolve_identity_and_source_policy(
             diagnostics.append(f"Domain-constrained search failed for {domain}: {error}")
             continue
 
-        candidate_urls = _candidate_urls_for_domain(domain_results, domain)
+        candidate_urls = _candidate_urls_for_domain(outcome.results, domain)
         if domain_candidate.discovery_url:
             candidate_urls.insert(0, domain_candidate.discovery_url)
         unique_urls = list(dict.fromkeys(candidate_urls))
