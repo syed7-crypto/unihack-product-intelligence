@@ -63,7 +63,3 @@ The concise judge walkthrough is in [docs/DEMO.md](docs/DEMO.md).
 ## Verified snapshot
 
 The checked-in [result.csv](result.csv) snapshot contains 10 catalogue rows: 2 `ready`, 7 `needs_review`, and 1 `blocked`, with 9 accepted attributes total. The companion [review.csv](review.csv) contains 15 review issues, and [candidate_telemetry.csv](candidate_telemetry.csv) contains 14 candidate records. These are one externally sourced snapshot, not a promise of stable live-search results. The current deterministic suite reports `361 passed, 1 warning, 28 subtests passed` in 2.42 seconds in the repository virtual environment. See [docs/BENCHMARK.md](docs/BENCHMARK.md) for scope and runtime caveats.
-
-## Scope
-
-The MVP does not include official reference masters, unrestricted discovery, fuzzy identifier matching, automatic cross-reference, OCR/image processing, RAG, production persistence, cloud deployment, or a catalogue-management UI. Reference fixtures are explicitly mock/test data.
