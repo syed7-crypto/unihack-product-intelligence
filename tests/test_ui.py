@@ -1,6 +1,7 @@
 """Tests for pure UI formatting helpers (no browser interaction required)."""
 
 import unittest
+from unittest.mock import patch
 
 from src.product_intelligence.attribute_extraction import AttributeEvidence, AttributeExtractionResult
 from src.product_intelligence.confidence_scoring import ConfidenceAssessment, ConfidenceScoringResult
@@ -17,6 +18,13 @@ from src.product_intelligence.product_identification import (
 from src.product_intelligence.delivery_schema import load_delivery_schema
 from src.product_intelligence.ui import (
     CANONICAL_DELIVERY_SCHEMA_PATH,
+    DEMO_CATALOGUE_PATH,
+    MAX_PUBLIC_DEMO_ROWS,
+    PUBLIC_DEMO_LIMIT_MESSAGE,
+    PUBLIC_DEMO_NOTICE,
+    _load_demo_catalogue,
+    _public_demo_limit_error,
+    _render_catalogue_preview,
     build_attribute_rows,
     build_conflict_rows,
 )
@@ -93,6 +101,52 @@ def sample_result() -> ProductIntelligenceResult:
 
 
 class UiFormattingTests(unittest.TestCase):
+    def test_demo_catalogue_loads_exactly_ten_rows(self) -> None:
+        first = _load_demo_catalogue()
+        second = _load_demo_catalogue()
+
+        self.assertEqual(DEMO_CATALOGUE_PATH.name, "input.csv")
+        self.assertEqual(len(first), MAX_PUBLIC_DEMO_ROWS)
+        self.assertEqual(
+            [row.Mfg_Part_Num for row in first],
+            [row.Mfg_Part_Num for row in second],
+        )
+
+    def test_demo_rows_use_the_shared_catalogue_preview_renderer(self) -> None:
+        demo_rows = _load_demo_catalogue()
+
+        with patch("src.product_intelligence.ui.st.dataframe") as dataframe:
+            rendered_rows = _render_catalogue_preview(demo_rows)
+
+        self.assertIs(rendered_rows, demo_rows)
+        dataframe.assert_called_once()
+        preview_payload = dataframe.call_args.args[0]
+        self.assertEqual(
+            [row["Mfg_Part_Num"] for row in preview_payload],
+            [row.Mfg_Part_Num for row in demo_rows[:8]],
+        )
+
+    def test_public_demo_allows_ten_rows(self) -> None:
+        self.assertIsNone(_public_demo_limit_error(10))
+
+    def test_public_demo_rejects_rows_before_batch_execution(self) -> None:
+        message = _public_demo_limit_error(11)
+        self.assertEqual(message, PUBLIC_DEMO_LIMIT_MESSAGE)
+        self.assertEqual(_public_demo_limit_error(1000), message)
+
+    def test_public_demo_messaging_explains_deployment_limit(self) -> None:
+        self.assertIn("🚀 **Demo Mode**", PUBLIC_DEMO_NOTICE)
+        self.assertIn("public prototype", PUBLIC_DEMO_NOTICE)
+        self.assertIn("external search and AI APIs", PUBLIC_DEMO_NOTICE)
+        self.assertIn("run the project locally", PUBLIC_DEMO_NOTICE)
+        self.assertIn("**Demo limit reached**", PUBLIC_DEMO_LIMIT_MESSAGE)
+        self.assertIn("supports up to 10 products", PUBLIC_DEMO_LIMIT_MESSAGE)
+        self.assertNotIn("can only handle 10", PUBLIC_DEMO_NOTICE.lower())
+        self.assertNotIn("can only handle 10", PUBLIC_DEMO_LIMIT_MESSAGE.lower())
+
+    def test_non_public_mode_remains_unrestricted(self) -> None:
+        self.assertIsNone(_public_demo_limit_error(1000, enabled=False))
+
     def test_ui_uses_locked_canonical_252_column_schema(self) -> None:
         schema = load_delivery_schema(CANONICAL_DELIVERY_SCHEMA_PATH)
 

@@ -21,6 +21,22 @@ PAGE_NAMES = ("Run", "Results", "Review", "Delivery")
 CANONICAL_DELIVERY_SCHEMA_PATH = (
     Path(__file__).resolve().parents[2] / "data" / "unihack_delivery_schema.csv"
 )
+DEMO_CATALOGUE_PATH = Path(__file__).resolve().parents[2] / "data" / "input.csv"
+MAX_PUBLIC_DEMO_ROWS = 10
+PUBLIC_DEMO_MODE = True
+PUBLIC_DEMO_NOTICE = (
+    "🚀 **Demo Mode**\n\n"
+    "This public prototype is limited to 10 products per run because live "
+    "enrichment uses external search and AI APIs.\n\n"
+    "To process more than 10 products, run the project locally with your own "
+    "Serper and Gemini API keys."
+)
+PUBLIC_DEMO_LIMIT_MESSAGE = (
+    "**Demo limit reached**\n\n"
+    "The public demo supports up to 10 products per run.\n\n"
+    "To process larger catalogues, run the project locally with your own "
+    "Serper and Gemini API keys."
+)
 
 
 def main() -> None:
@@ -58,6 +74,7 @@ def _render_run_page() -> None:
         "Run the governed catalogue pipeline and monitor each trust boundary "
         "from discovery to delivery."
     )
+    st.info(PUBLIC_DEMO_NOTICE)
 
     batch = _get_batch()
     _render_pipeline_stages(batch, running=False)
@@ -66,15 +83,28 @@ def _render_run_page() -> None:
     left, right = st.columns((1.45, 1), gap="large")
     with left:
         st.subheader("Inputs")
-        catalogue_file = st.file_uploader(
-            "Catalogue input CSV",
-            type=["csv"],
-            help="Expected raw fields include Mfg_Part_Num, Part_Desc, brand fields, and Part_Manuf.",
+        source_mode = st.radio(
+            "Catalogue source",
+            ("Upload Catalogue CSV", "Load Demo Dataset"),
+            horizontal=True,
         )
+        catalogue_source: Any | None = None
         rows: list[CatalogInputRow] = []
-        if catalogue_file is not None:
-            rows = _preview_catalogue(catalogue_file)
-            st.caption(f"{len(rows):,} catalogue rows loaded")
+        if source_mode == "Load Demo Dataset":
+            catalogue_source = DEMO_CATALOGUE_PATH
+            rows = _load_demo_catalogue()
+            if rows:
+                _render_catalogue_preview(rows)
+                st.caption(f"{len(rows):,} products loaded")
+        else:
+            catalogue_source = st.file_uploader(
+                "Catalogue input CSV",
+                type=["csv"],
+                help="Expected raw fields include Mfg_Part_Num, Part_Desc, brand fields, and Part_Manuf.",
+            )
+            if catalogue_source is not None:
+                rows = _preview_catalogue(catalogue_source)
+                st.caption(f"{len(rows):,} catalogue rows loaded")
 
     with right:
         st.subheader("Run configuration")
@@ -88,11 +118,15 @@ def _render_run_page() -> None:
         )
         st.caption("Search results remain untrusted until approved retrieval and exact-MPN verification.")
 
-    if catalogue_file is None:
+    if catalogue_source is None:
         _render_empty_state(
             "Start with a catalogue CSV",
             "The run uses the real catalogue batch API. No enrichment results are fabricated in the UI.",
         )
+        return
+    limit_error = _public_demo_limit_error(len(rows))
+    if limit_error:
+        st.error(limit_error, icon="🚀")
         return
     st.divider()
     action_col, state_col = st.columns((1, 1.8), gap="large")
@@ -110,11 +144,15 @@ def _render_run_page() -> None:
 
     if run_clicked:
         started = time.perf_counter()
-        batch = _run_catalogue(catalogue_file, discovery_enabled)
+        batch = _run_catalogue(catalogue_source, discovery_enabled, row_count=len(rows))
         st.session_state["catalogue_run_duration"] = time.perf_counter() - started
         if batch is not None:
             st.session_state["catalogue_batch_result"] = batch
-            st.session_state["catalogue_filename"] = catalogue_file.name
+            st.session_state["catalogue_filename"] = (
+                catalogue_source.name
+                if isinstance(catalogue_source, Path)
+                else catalogue_source.name
+            )
             st.rerun()
 
     batch = _get_batch()
@@ -187,20 +225,62 @@ def _preview_catalogue(uploaded: Any) -> list[CatalogInputRow]:
             rows = load_catalog_rows(temp_path)
         finally:
             temp_path.unlink(missing_ok=True)
-        st.dataframe(
-            [row.model_dump() for row in rows[:8]],
-            hide_index=True,
-            use_container_width=True,
-        )
-        return rows
+        return _render_catalogue_preview(rows)
     except Exception as error:
         st.error(f"Catalogue CSV could not be parsed: {error}")
         return []
 
 
+def _render_catalogue_preview(rows: list[CatalogInputRow]) -> list[CatalogInputRow]:
+    """Render the shared catalogue preview for uploads and the demo dataset."""
+    st.dataframe(
+        [row.model_dump() for row in rows[:8]],
+        hide_index=True,
+        use_container_width=True,
+    )
+    return rows
+
+
+def _load_demo_catalogue() -> list[CatalogInputRow]:
+    """Load the deterministic first ten rows from the repository catalogue."""
+    try:
+        rows = load_catalog_rows(DEMO_CATALOGUE_PATH)
+        if len(rows) < MAX_PUBLIC_DEMO_ROWS:
+            st.error("The repository demo catalogue contains fewer than 10 products.")
+            return []
+        return rows[:MAX_PUBLIC_DEMO_ROWS]
+    except Exception as error:
+        st.error(f"Demo catalogue could not be loaded: {error}")
+        return []
+
+
+def _public_demo_limit_error(
+    row_count: int,
+    *,
+    enabled: bool = PUBLIC_DEMO_MODE,
+) -> str | None:
+    """Return the public-demo guard message before any provider can be called."""
+    if enabled and row_count > MAX_PUBLIC_DEMO_ROWS:
+        return PUBLIC_DEMO_LIMIT_MESSAGE
+    return None
+
+
+def _materialize_catalogue_source(source: Any, root: Path) -> Path:
+    """Put either an upload or repository path on the normal batch input path."""
+    if isinstance(source, Path):
+        target = root / source.name
+        target.write_bytes(source.read_bytes())
+        return target
+    target = root / Path(source.name).name
+    target.write_bytes(source.getvalue())
+    return target
+
+
 def _run_catalogue(
-    catalogue_file: Any,
+    catalogue_source: Any,
     discovery_enabled: bool,
+    *,
+    row_count: int | None = None,
 ) -> BatchResult | None:
     started = time.perf_counter()
     progress = st.container(border=True)
@@ -238,8 +318,14 @@ def _run_catalogue(
         update_progress("Preparing inputs", "Reading catalogue and canonical delivery schema")
         with tempfile.TemporaryDirectory(prefix="unihack_catalogue_") as directory:
             root = Path(directory)
-            catalogue_path = root / Path(catalogue_file.name).name
-            catalogue_path.write_bytes(catalogue_file.getvalue())
+            catalogue_path = _materialize_catalogue_source(catalogue_source, root)
+            if row_count is None and PUBLIC_DEMO_MODE:
+                row_count = len(load_catalog_rows(catalogue_path))
+            limit_error = _public_demo_limit_error(row_count or 0)
+            if limit_error:
+                activity.error("Processing stopped · public demo limit exceeded")
+                st.error(limit_error)
+                return None
             schema = load_delivery_schema(CANONICAL_DELIVERY_SCHEMA_PATH)
 
             completed.append("Inputs")
